@@ -1559,7 +1559,7 @@ function updateHud() {
       ? "Spectator map: Tab closes | scroll zoom, drag pan | WASD move"
       : "Spectator: WASD move through walls | Tab opens map";
   } else if (myTeam === "red") {
-    const charges = hudStat("Counter-Hacks", `${me.charges.a}/${me.charges.m}`) +
+    const charges = hudStat("Hacks", `${me.charges.a}/${me.charges.m}`) +
       (me.charges.n ? hudStat("Next", `${me.charges.n}s`, "warning") : "") +
       (hackMode ? hudStat("Hack mode", "ON", "warning") : "") +
       (me.disguised ? hudStat("Disguise", "ACTIVE", "ready") : "") +
@@ -1593,7 +1593,7 @@ function updateHud() {
         : "CONNECTION LOST: click a numbered spawn to reboot | scroll zoom, drag pan";
     }
   } else {
-    const charges = hudStat("Hacks", `${me.charges.a}/${me.charges.m}`) +
+    const charges = hudStat("Counter-Hacks", `${me.charges.a}/${me.charges.m}`) +
       (me.charges.n ? hudStat("Next", `${me.charges.n}s`, "warning") : "");
     const blackout = snap.dark
       ? hudStat("F Blackout", `ACTIVE ${snap.dark}s`, "warning")

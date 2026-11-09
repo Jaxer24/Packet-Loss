@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Packet Loss</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=lobbies-9">
+  <link rel="stylesheet" href="style.css?v=lobby-controls-10">
 </head>
 <body>
   <audio id="backgroundMusic" src="EXITUS%20-%20Dark%20Techno%20Industrial%20-%20Copyright%20Free%20Music.mp3" loop preload="none"></audio>
@@ -49,6 +49,33 @@
       <p>Lobby code: <strong id="lobbyCode"></strong></p>
       <p id="lobbyPrivacy"></p>
       <button id="btnPrivacy" class="alt small hidden"></button>
+      <details class="lobby-guide">
+        <summary>Team Goals &amp; Controls</summary>
+        <div class="lobby-team-guides">
+          <div class="lobby-guide-team red">
+            <h3>RED - HACKERS</h3>
+            <p class="lobby-goal"><strong>Goal:</strong> Hack the servers.</p>
+            <p><strong>WASD</strong>: Move | <strong>Mouse</strong>: Aim / shoot</p>
+            <p><strong>Q</strong>: Knife | <strong>E</strong>: Cycle Weapons</p>
+            <p><strong>Z</strong>: Steal ID | <strong>X</strong>: Dispose Corpse</p>
+            <p><strong>F + click</strong>: Hack</p>
+            <p><strong>Space</strong>: Teleport Pad</p>
+            <p><strong>Tab</strong>: Radar</p>
+            <p>Stand near server to hack it.</p>
+          </div>
+          <div class="lobby-guide-team blue">
+            <h3>BLUE - SECURITY</h3>
+            <p class="lobby-goal"><strong>Goal:</strong> Protect the servers.</p>
+            <p><strong>WASD</strong>: Move | <strong>Mouse</strong>: Aim / shoot</p>
+            <p><strong>Q</strong>: Knife | <strong>E</strong>: Cycle Weapons</p>
+            <p><strong>Z</strong>: Alert Guards | <strong>X</strong>: EMP</p>
+            <p><strong>F + click</strong>: Counter-Hack </p>
+            <p><strong>Space</strong>: Teleport pad</p>
+            <p><strong>Tab</strong>: Radar (Click a guard to control it)</p>
+            <p>Click hacked servers on radar to counterhack</p>
+          </div>
+        </div>
+      </details>
       <div class="teams">
         <div><h3 class="red">RED - Hackers</h3><ul id="redList"></ul><button id="joinRed">Join Red</button></div>
         <div><h3 class="blue">BLUE - Security</h3><ul id="blueList"></ul><button id="joinBlue">Join Blue</button></div>
@@ -58,19 +85,6 @@
       <button id="btnStart" class="hidden">Start match (host)</button>
       <button id="btnLeaveLobby" class="alt">Leave lobby</button>
       </div>
-      <details>
-        <summary>Controls</summary>
-        <div class="help">
-          <b>Red:</b> WASD move, mouse aim + click shoot, Q knife, E cycle pistol/SMG/grenades in character view.
-          Near a server, click it on radar or in hack mode to start extraction; each accepted attempt costs one Red hack charge, including retries. Once the mouse challenge starts, nearby guards pursue you as you move. Complete mouse challenges while moving with WASD. Walk over ready lockers to collect them. <b>F</b> toggle hack mode then click a server/door/camera/laser to hack or click elsewhere to shoot,
-          <b>Z</b> steal a dead guard's nametag, <b>hold X</b> near a body to dispose it, <b>Space</b> teleport pad, <b>Tab</b> open/close radar.<br>
-          <b>Blue:</b> radar view: click a guard marker to possess it, click an open door to close it, or click a hacked camera, laser or extracting server to counterhack. Doors, cameras and lasers retain their hacked state until the opposing team changes it. <b>Z</b> alert nearby guards to investigate the mouse location, <b>X</b> deploy an EMP that temporarily closes doors and activates cameras and lasers in its field, <b>F</b> blackout.
-          While possessing: WASD + mouse + click, Q knife and E cycle weapons in guard view, <b>Tab</b> switch radar/guard view, <b>Esc</b> leave the guard. Walk over ready lockers for supplies; <b>Space</b> uses a collected teleport pad. You can move with WASD while the radar is open.<br>
-          <b>Minigames:</b> Server counterhacks and Red reboots use randomly selected mouse challenges. A successful server counterhack removes 60% of accumulated progress. Device counterhacks are immediate and cost one security charge. Blue has one attempt per extraction; Red may retry reboots on failure.<br>
-          <b>Radar:</b> left-drag to pan, scroll to zoom, or click without dragging to interact. Blue's red alerts mark hacked devices and detected undisguised Red players.<br>
-          Solo testing: you can start alone. Blue-only matches get a Red bot. Open a second browser window (another account) to play both sides.
-        </div>
-      </details>
     </div>
   </section>
 
