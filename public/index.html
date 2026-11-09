@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Packet Loss</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css?v=lobbies-9">
+</head>
+<body>
+  <audio id="backgroundMusic" src="EXITUS%20-%20Dark%20Techno%20Industrial%20-%20Copyright%20Free%20Music.mp3" loop preload="none"></audio>
+  <div id="musicControls" class="hidden">
+    <button id="settingsToggle" class="alt" type="button" aria-expanded="false" aria-controls="settingsPanel">Settings</button>
+    <div id="settingsPanel" class="hidden">
+      <div class="hud-heading">Audio</div>
+      <button id="musicToggle" class="alt small" type="button">Pause music</button>
+      <label for="musicVolume">Music volume: <span id="musicVolumeValue">5%</span></label>
+      <input id="musicVolume" type="range" min="0" max="100" step="1" value="5">
+    </div>
+    <span id="musicStatus" role="status"></span>
+  </div>
+  <!-- 1) LOGIN / REGISTER -->
+  <section id="auth" class="screen">
+    <div class="card">
+      <h1>PACKET LOSS</h1>
+      <p class="sub">Asymmetric hacker vs. security prototype</p>
+      <input id="user" placeholder="username (3-24 letters/numbers/_)" autocomplete="username">
+      <input id="pass" type="password" placeholder="password (8+ characters)" autocomplete="current-password">
+      <div class="row">
+        <button id="btnLogin">Log in</button>
+        <button id="btnRegister" class="alt">Register</button>
+      </div>
+      <p id="authError" class="error"></p>
+    </div>
+  </section>
+
+  <!-- 2) LOBBY -->
+  <section id="lobby" class="screen hidden">
+    <div class="card wide">
+      <h1>LOBBY</h1>
+      <p>Logged in as <b id="me"></b> <button id="btnLogout" class="alt small">Log out</button></p>
+      <div id="lobbySelect">
+        <p>Choose how to join a game.</p>
+        <div class="row"><button id="btnRandom">Join random</button><button id="btnHost">Host a lobby</button></div>
+        <label for="lobbyCodeInput">Enter lobby code</label>
+        <div class="row"><input id="lobbyCodeInput" maxlength="8" autocomplete="off" placeholder="Lobby code"><button id="btnJoinCode">Join code</button></div>
+        <p id="lobbyError" class="error" role="status"></p>
+      </div>
+      <div id="lobbyRoom" class="hidden">
+      <p>Lobby code: <strong id="lobbyCode"></strong></p>
+      <p id="lobbyPrivacy"></p>
+      <button id="btnPrivacy" class="alt small hidden"></button>
+      <div class="teams">
+        <div><h3 class="red">RED - Hackers</h3><ul id="redList"></ul><button id="joinRed">Join Red</button></div>
+        <div><h3 class="blue">BLUE - Security</h3><ul id="blueList"></ul><button id="joinBlue">Join Blue</button></div>
+      </div>
+      <p id="spectatorList" class="sub"></p>
+      <p id="lobbyMsg" class="sub"></p>
+      <button id="btnStart" class="hidden">Start match (host)</button>
+      <button id="btnLeaveLobby" class="alt">Leave lobby</button>
+      </div>
+      <details>
+        <summary>Controls</summary>
+        <div class="help">
+          <b>Red:</b> WASD move, mouse aim + click shoot, Q knife, E cycle pistol/SMG/grenades in character view.
+          Near a server, click it on radar or in hack mode to start extraction; each accepted attempt costs one Red hack charge, including retries. Once the mouse challenge starts, nearby guards pursue you as you move. Complete mouse challenges while moving with WASD. Walk over ready lockers to collect them. <b>F</b> toggle hack mode then click a server/door/camera/laser to hack or click elsewhere to shoot,
+          <b>Z</b> steal a dead guard's nametag, <b>hold X</b> near a body to dispose it, <b>Space</b> teleport pad, <b>Tab</b> open/close radar.<br>
+          <b>Blue:</b> radar view: click a guard marker to possess it, click an open door to close it, or click a hacked camera, laser or extracting server to counterhack. Doors, cameras and lasers retain their hacked state until the opposing team changes it. <b>Z</b> alert nearby guards to investigate the mouse location, <b>X</b> deploy an EMP that temporarily closes doors and activates cameras and lasers in its field, <b>F</b> blackout.
+          While possessing: WASD + mouse + click, Q knife and E cycle weapons in guard view, <b>Tab</b> switch radar/guard view, <b>Esc</b> leave the guard. Walk over ready lockers for supplies; <b>Space</b> uses a collected teleport pad. You can move with WASD while the radar is open.<br>
+          <b>Minigames:</b> Server counterhacks and Red reboots use randomly selected mouse challenges. A successful server counterhack removes 60% of accumulated progress. Device counterhacks are immediate and cost one security charge. Blue has one attempt per extraction; Red may retry reboots on failure.<br>
+          <b>Radar:</b> left-drag to pan, scroll to zoom, or click without dragging to interact. Blue's red alerts mark hacked devices and detected undisguised Red players.<br>
+          Solo testing: you can start alone. Blue-only matches get a Red bot. Open a second browser window (another account) to play both sides.
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- 3) GAME -->
+  <section id="game" class="screen hidden">
+    <canvas id="cv"></canvas>
+    <div id="hud" aria-label="Match status"></div>
+    <div id="matchStatus" aria-label="Match time"></div>
+    <div id="serverStatus" aria-label="Server progress"></div>
+    <div id="log" role="log" aria-live="polite" aria-label="Game notifications"></div>
+    <div id="hint" aria-label="Contextual controls"></div>
+    <div id="roomControls"><button id="btnLeaveGame" class="alt small">Leave lobby</button><span> Lobby code: <strong id="gameLobbyCode"></strong></span></div>
+    <div id="counter" class="overlay hidden">
+      <div class="card minigame-card">
+        <h2 id="minigameTitle">MINIGAME</h2>
+        <p id="minigameInstructions"></p>
+        <p id="minigameProgress" class="hidden"></p>
+        <canvas id="minigameCanvas" width="400" height="240"></canvas>
+        <p id="cmTimer"><span id="cmTimeLabel">Time left</span>: <span id="cmTime"></span>s</p>
+        <button id="minigameCancel" class="alt">Give up</button>
+      </div>
+    </div>
+    <div id="endOverlay" class="overlay hidden">
+      <div class="card">
+        <h2 id="endTitle"></h2>
+        <p id="endReason"></p>
+        <button id="btnBack">Back to lobby (host)</button>
+        <button id="btnLeaveEnd" class="alt">Leave lobby</button>
+        <p class="sub">Returns automatically after a few seconds.</p>
+      </div>
+    </div>
+  </section>
+
+  <script src="minigames.js?v=faster-challenges-22"></script>
+  <script src="wall-destruction.js?v=1"></script>
+  <script src="client.js?v=zx-controls-57"></script>
+</body>
+</html>
