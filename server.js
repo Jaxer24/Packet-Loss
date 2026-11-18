@@ -55,7 +55,7 @@ app.use(
 const validUsername = (v) => typeof v === "string" && /^[a-zA-Z0-9_]{3,24}$/.test(v);
 const validPassword = (v) =>
   typeof v === "string" &&
-  Buffer.byteLength(v, "utf8") >= 8 &&
+  Buffer.byteLength(v, "utf8") >= 4 &&
   Buffer.byteLength(v, "utf8") <= 72;
 const saveSession = (req) =>
   new Promise((ok, no) => req.session.save((e) => (e ? no(e) : ok())));
@@ -71,7 +71,7 @@ app.post("/api/register", async (req, res, next) => {
       .json({ error: "Username must be 3-24 letters, numbers, or underscores." });
   }
   if (!validPassword(password)) {
-    return res.status(400).json({ error: "Password must be 8-72 bytes long." });
+    return res.status(400).json({ error: "Password must be 4-72 bytes long." });
   }
   const key = username.toLowerCase();
   if (users.has(key)) {

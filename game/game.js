@@ -21,9 +21,15 @@ const KNIFE_HALF_ANGLE = 0.9;
 const KNIFE_COOLDOWN_SECONDS = 0.5;
 const KNIFE_EFFECT_SECONDS = 0.25;
 const GUNS = {
-  pistol: { capacity: C.pistolAmmo, cd: 0.35, spread: 0.03, dmg: C.pistolDamage },
-  smg: { capacity: C.smgAmmo, cd: 0.09, spread: 0.12, dmg: C.smgDamage },
+  pistol: { capacity: C.pistolAmmo, cd: 0.35, spread: 0, dmg: C.pistolDamage },
+  smg: { capacity: C.smgAmmo, cd: 0.09, spread: 0, dmg: C.smgDamage },
 };
+const SMG_RECOIL_PATTERN = [
+  0, 0.025, 0.06, 0.105, 0.15, 0.195,
+  0.225, 0.25, 0.235, 0.2, 0.16, 0.11,
+  0.055, 0, -0.055, -0.11, -0.165, -0.215,
+  -0.245, -0.22, -0.17, -0.105, -0.04, 0.025,
+];
 const nowSec = () => Date.now() / 1000;
 const rid = () => Math.random().toString(36).slice(2, 7);
 const num = (v, lo, hi) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : 0);
@@ -44,6 +50,7 @@ class Game {
     this.result = null;
     this.t = nowSec();
     this.host = null;
+    this.recoilEnabled = true;
   }
 
   // =============== LOBBY ===============
@@ -103,6 +110,7 @@ class Game {
       phase: this.phase,
       result: this.result,
       host: this.hostName(),
+      recoilEnabled: this.recoilEnabled,
       players: [...this.players.values()].map((p) => ({
         name: p.name,
         team: p.team,
@@ -191,7 +199,9 @@ class Game {
     this.grenades = [];
     this.pings = [];
     this.emps = [];
-    this.alertCdUntil = 0;
+    this.alertPool = { max: 3, cds: [], recharge: C.alertCooldownSeconds };
+    this.latestManualAlert = null;
+    this.manualAlertSequence = 0;
     this.empCdUntil = 0;
     this.lightsOffUntil = 0;
     this.lightsCdUntil = 0;
@@ -205,6 +215,7 @@ class Game {
         ),
       ),
       cds: [],
+      recharge: C.remoteHackRechargeSeconds,
     };
     this.bluePool = {
       max: Math.max(
@@ -215,6 +226,7 @@ class Game {
         ),
       ),
       cds: [],
+      recharge: C.blueSecurityRechargeSeconds,
     };
 
     const guardCount = C.guardCountByRedPlayers[Math.min(3, reds.length)] || 5;
@@ -272,6 +284,8 @@ class Game {
       grenades: 0,
       cur: "pistol",
       nextShot: 0,
+      reloadAt: 0,
+      reloading: null,
       disguise: null,
       markerId: null,
       pad: null,
@@ -318,8 +332,11 @@ class Game {
       repathAt: 0,
       angle: 0,
       nextShot: 0,
+      reloadAt: 0,
+      reloading: null,
       possessedBy: null,
       input: null,
+      alertPriority: -1,
       guns: { pistol: C.pistolAmmo, smg: C.smgAmmo },
       grenades: 0,
       hasPad: false,
@@ -367,6 +384,10 @@ class Game {
     ) {
       p.team = msg.team;
       this.broadcastLobby();
+    } else if (msg.t === "recoil_enabled" && this.phase === "lobby" && name === this.hostName() &&
+        typeof msg.enabled === "boolean") {
+      this.recoilEnabled = msg.enabled;
+      this.broadcastLobby();
     } else if (msg.t === "start" && this.phase === "lobby" && name === this.hostName()) {
       const n = [...this.players.values()].filter(
         (x) => x.team === "red" || x.team === "blue",
@@ -386,6 +407,7 @@ class Game {
         fire: !!msg.fire,
         use: !!msg.use,
         dispose: !!msg.dispose,
+        run: !!msg.run,
       };
     } else if (msg.t === "act" && this.phase === "playing" && p.team !== "spectator") {
       this.act(p, msg);
@@ -408,7 +430,7 @@ class Game {
     if (p.team === "red") {
       if (m.a === "respawn_start") {
         if (p.alive || p.respawnGame) {
-          this.send(p.name, { t: "minigame_rejected", request: m.request, text: "Reboot unavailable. Try again shortly." });
+          this.send(p.name, { t: "minigame_rejected", request: m.request, text: "Respawn unavailable. Try again shortly." });
           return;
         }
         const remaining = C.respawnMaxSeconds - (t - p.deadAt);
@@ -423,9 +445,10 @@ class Game {
           purpose: "respawn",
           request: m.request,
           id: p.respawnGame.id,
-          game: ["flappy", "maze", "meteors"][Math.floor(Math.random() * 3)],
+          game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
           seconds,
           entrySeconds: Math.min(C.minigameEntrySeconds, remaining),
+          difficulty: this.minigameDifficulty(),
         });
         return;
       }
@@ -454,14 +477,21 @@ class Game {
       if (!p.alive) {
         return;
       }
-      if (m.a === "knife") {
+      if (m.a === "reload") {
+        this.startReload(p);
+      } else if (m.a === "knife") {
+        const previous = p.cur;
         p.cur = "knife";
+        this.fire(p, t);
+        p.cur = previous;
       } else if (m.a === "weapon_cycle") {
-        this.cycleWeapon(p, p);
+        this.cycleWeapon(p, p, m.direction || 1);
+      } else if (m.a === "weapon_select") {
+        this.selectWeapon(p, p, String(m.weapon || ""));
+      } else if (m.a === "use_equipped") {
+        if (p.cur === "pad") this.fire(p, t);
       } else if (m.a === "steal") {
         this.stealTag(p);
-      } else if (m.a === "pad") {
-        this.usePad(p);
       } else if (m.a === "hack") {
         this.remoteHack(p, String(m.id));
       } else if (m.a === "server_start") {
@@ -478,6 +508,13 @@ class Game {
     }
   }
 
+  minigameDifficulty(serverId = null) {
+    const progress = this.servers.reduce((sum, server) =>
+      sum + (server.done ? 1 : server.id === serverId ? server.progress / C.serverHackSeconds : 0), 0);
+    const elapsed = Math.max(0, Math.min(1, (this.t - this.startedAt) / C.matchSeconds));
+    return Math.max(0, Math.min(1, progress * 0.18 + elapsed * 0.35));
+  }
+
   // =============== CHARGE POOLS ===============
   // `cds` contains the absolute time at which each spent charge becomes available.
   availableCharges(pool) {
@@ -490,32 +527,78 @@ class Game {
     if (this.availableCharges(pool) <= 0) {
       return false;
     }
-    pool.cds.push(this.t + seconds);
+    const previousReady = pool.cds.length ? Math.max(...pool.cds) : this.t;
+    pool.cds.push(Math.max(this.t, previousReady) + seconds);
     return true;
   }
 
   // Compact fields are part of the client snapshot: available, maximum, next recharge.
   chargeStatus(pool) {
     const available = this.availableCharges(pool);
+    const progress = pool.cds
+      .slice()
+      .sort((a, b) => a - b)
+      .map((readyAt, index, all) => {
+        const startedAt = index === 0 ? readyAt - (pool.recharge || 1) : all[index - 1];
+        return Math.max(0, Math.min(1, (this.t - startedAt) / (pool.recharge || 1)));
+      });
     return {
       a: available,
       m: pool.max,
       n: pool.cds.length ? Math.ceil(Math.min(...pool.cds) - this.t) : 0,
+      p: [...Array(available).fill(1), ...progress],
     };
   }
 
   // =============== RED ACTIONS ===============
-  cycleWeapon(entity, player) {
-    const weapons = ["pistol", "smg", "grenade"];
+  startReload(entity, player = entity) {
+    const spec = GUNS[entity.cur];
+    if (!spec || entity.reloading || entity.guns[entity.cur] >= spec.capacity) return;
+    entity.reloading = entity.cur;
+    entity.reloadDuration = entity.cur === "smg" ? C.smgReloadSeconds : C.pistolReloadSeconds;
+    entity.reloadAt = this.t + entity.reloadDuration;
+    this.toPlayer(player, "Reloading " + entity.cur.toUpperCase() + "...");
+  }
+
+  finishReload(entity) {
+    if (!entity.reloading || this.t < entity.reloadAt) return;
+    const weapon = entity.reloading;
+    if (GUNS[weapon] && Object.hasOwn(entity.guns, weapon)) {
+      entity.guns[weapon] = GUNS[weapon].capacity;
+    }
+    entity.reloading = null;
+    entity.reloadAt = 0;
+    entity.reloadDuration = 0;
+  }
+
+  availableWeapon(entity, weapon) {
+    if (weapon === "knife") return true;
+    if (weapon === "remote") return false;
+    if (weapon === "pistol" || weapon === "smg") return (entity.guns[weapon] || 0) > 0;
+    if (weapon === "grenade") return entity.grenades > 0;
+    if (weapon === "pad") return !!(entity.hasPad || entity.pad);
+    return false;
+  }
+
+  cycleWeapon(entity, player, direction = 1) {
+    const weapons = ["pistol", "smg", "grenade", "pad", "knife"];
     const current = weapons.indexOf(entity.cur);
+    const step = direction < 0 ? -1 : 1;
     for (let offset = 1; offset <= weapons.length; offset++) {
-      const weapon = weapons[(current + offset) % weapons.length];
-      if (weapon === "grenade" ? entity.grenades > 0 : entity.guns[weapon] > 0) {
+      const weapon = weapons[(current + step * offset + weapons.length) % weapons.length];
+      if (this.availableWeapon(entity, weapon)) {
         entity.cur = weapon;
         return;
       }
     }
-    this.toPlayer(player, "No weapons with ammo available. Use Q for your knife.");
+    this.toPlayer(player, "No other usable equipment. Right-click for your knife.");
+  }
+
+  selectWeapon(entity, player, weapon) {
+    if (!this.availableWeapon(entity, weapon)) {
+      return this.toPlayer(player, "That equipment is not available.");
+    }
+    entity.cur = weapon;
   }
 
   startServerExtraction(p, id) {
@@ -536,7 +619,23 @@ class Game {
       return this.toPlayer(p, "Get closer to the server before starting extraction.");
     }
     if (!this.useCharge(this.redPool, C.remoteHackRechargeSeconds)) {
-      return this.toPlayer(p, "No remote hack charges left.");
+      return this.toPlayer(p, "No hack charges left.");
+    }
+    if (p.disguise) {
+      p.disguise = null;
+      p.markerId = null;
+      this.toPlayer(p, "Hacking exposed your disguise!");
+    }
+    this.makeNoise(server.x, server.y);
+    for (const guard of this.guards) {
+      if (!guard.alive || guard.possessedBy) continue;
+      guard.state = "investigate";
+      guard.until = this.t + C.guardInvestigationSeconds;
+      guard.target = { x: p.x, y: p.y };
+      guard.extractionTarget = p.name;
+      guard.seenPlayer = null;
+      guard.lastSeen = this.t;
+      guard.path = [];
     }
     server.extractor = p.name;
     server.extractionId = rid();
@@ -560,10 +659,11 @@ class Game {
       purpose: "extraction",
       id: p.extraction.challengeId,
       server: p.extraction.server,
-      game: ["flappy", "maze", "meteors"][Math.floor(Math.random() * 3)],
+      game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
       seconds: Math.max(0, C.serverHackSeconds -
         this.servers.find((server) => server.id === p.extraction.server).progress),
       entrySeconds: C.serverChallengeEntrySeconds,
+      difficulty: this.minigameDifficulty(p.extraction.server),
     });
   }
 
@@ -586,6 +686,15 @@ class Game {
       }
     }
     p.extraction = null;
+    for (const guard of this.guards) {
+      if (guard.extractionTarget !== p.name) continue;
+      guard.extractionTarget = null;
+      guard.seenPlayer = null;
+      guard.state = "investigate";
+      guard.target = { x: p.x, y: p.y };
+      guard.until = this.t + C.guardInvestigationSeconds;
+      guard.path = [];
+    }
     this.send(p.name, { t: "minigame_cancel", id: attempt.challengeId, text: reason });
   }
 
@@ -664,7 +773,7 @@ class Game {
       this.toPlayer(player, "Teleported.");
     } else if (entity.hasPad) {
       entity.pad = { x: entity.x, y: entity.y };
-      this.toPlayer(player, "Pad placed. Press Space again to teleport back.");
+      this.toPlayer(player, "Pad placed. Click again with the pad equipped to teleport back.");
     }
   }
 
@@ -690,16 +799,16 @@ class Game {
     locker.readyAt = this.t + C.lockerRestockSeconds;
     if (prize === "smg") {
       p.guns.smg = C.smgAmmo;
-      this.toPlayer(player, "Locker: SMG (press E to cycle weapons)");
+      this.toPlayer(player, "Locker: SMG (press 2 or cycle with the mouse wheel)");
     } else if (prize === "grenade") {
       p.grenades = Math.min(C.maxGrenades, p.grenades + 2);
-      this.toPlayer(player, "Locker: grenades (press E to cycle weapons)");
+      this.toPlayer(player, "Locker: grenades (press 3 or cycle with the mouse wheel)");
     } else if (prize === "armor") {
       p.armor = Math.min(C.redMaxArmor, p.armor + 5);
       this.toPlayer(player, "Locker: armor +5");
     } else if (prize === "pad") {
       p.hasPad = true;
-      this.toPlayer(player, "Locker: teleport pad (press Space)");
+      this.toPlayer(player, "Locker: teleport pad (press 4 and click to place or teleport)");
     } else {
       for (const k of Object.keys(p.guns)) {
         p.guns[k] = GUNS[k].capacity;
@@ -738,21 +847,37 @@ class Game {
         }
         this.toAll("An EMP field was deployed for " + C.empSeconds + "s.");
       } else {
-        if (t < this.alertCdUntil) return this.toPlayer(p, "Guard alert is on cooldown.");
-        this.alertCdUntil = t + C.alertCooldownSeconds;
+        if (!this.useCharge(this.alertPool, C.alertCooldownSeconds)) {
+          return this.toPlayer(p, "No guard alerts left.");
+        }
+        this.manualAlertSequence++;
+        this.latestManualAlert = {
+          x: m.x,
+          y: m.y,
+          until: t + C.guardInvestigationSeconds,
+          sequence: this.manualAlertSequence,
+        };
         this.addPing("manual", m.x, m.y, C.alertSeconds);
-        this.alertGuards(m.x, m.y, C.alertRange, C.guardInvestigationSeconds);
+        this.alertGuards(m.x, m.y, C.alertRange, C.guardInvestigationSeconds, this.manualAlertSequence);
         this.toTeam("blue", p.name + " sent guards to investigate.");
       }
-    } else if (m.a === "knife" || m.a === "weapon_cycle" || m.a === "pad") {
+    } else if (m.a === "reload") {
+      const guard = this.guards.find((g) => g.id === p.possessed && g.possessedBy === p.name && g.alive);
+      if (guard) this.startReload(guard, p);
+    } else if (m.a === "knife" || m.a === "weapon_cycle" || m.a === "weapon_select" || m.a === "use_equipped") {
       const guard = this.guards.find((g) => g.id === p.possessed && g.possessedBy === p.name && g.alive);
       if (!guard) return;
       if (m.a === "knife") {
+        const previous = guard.cur;
         guard.cur = "knife";
+        this.fire(guard, t);
+        guard.cur = previous;
       } else if (m.a === "weapon_cycle") {
-        this.cycleWeapon(guard, p);
-      } else {
-        this.usePad(guard, p);
+        this.cycleWeapon(guard, p, m.direction || 1);
+      } else if (m.a === "weapon_select") {
+        this.selectWeapon(guard, p, String(m.weapon || ""));
+      } else if (guard.cur === "pad") {
+        this.fire(guard, t);
       }
     } else if (m.a === "door") {
       const d = this.doors.find((x) => x.id === m.id);
@@ -805,18 +930,17 @@ class Game {
       p.possessed = g.id;
       p.view = "shooter";
       p.redLastSeen = new Map();
-    } else if (m.a === "exit") {
-      this.releaseGuard(p);
     } else if (m.a === "view") {
       if (p.possessed) {
-        p.view = p.view === "radar" ? "shooter" : "radar";
+        this.releaseGuard(p);
+        this.toPlayer(p, "Radar opened. The guard returned to AI control.");
       }
     } else if (m.a === "counter") {
       const s = this.servers.find((x) => x.id === m.id);
       if (!s || s.done || !s.extractor || s.counterUsed || s.counterCooldownUntil > t || p.counter) {
         return this.toPlayer(p, "Counterhack not available.");
       }
-      if (this.availableCharges(this.bluePool) <= 0) {
+      if (!this.useCharge(this.bluePool, C.blueSecurityRechargeSeconds)) {
         return this.toPlayer(p, "No security charges left.");
       }
       s.counterUsed = true; // one attempt per extraction session
@@ -827,9 +951,10 @@ class Game {
         t: "minigame",
         purpose: "counterhack",
         id: p.counter.id,
-        game: ["flappy", "maze", "meteors"][Math.floor(Math.random() * 3)],
+        game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
         seconds: C.counterhackSeconds,
         entrySeconds: C.minigameEntrySeconds,
+        difficulty: this.minigameDifficulty(s.id),
       });
     } else if (m.a === "cm_ready" && p.counter && m.id === p.counter.id &&
         p.counter.readyAt === null && t - p.counter.startedAt < C.minigameEntrySeconds) {
@@ -849,14 +974,11 @@ class Game {
         s && !s.done &&
         s.extractor && s.extractionId === attempt.sessionId
       ) {
-        if (!this.useCharge(this.bluePool, C.blueSecurityRechargeSeconds)) {
-          return this.toPlayer(p, "Counterhack could not finish: no security charges left.");
-        }
-        s.progress *= 0.25;
+        s.progress *= C.counterhackProgressMultiplier;
         s.lockoutUntil = t + C.serverCounterLockoutSeconds;
         const red = this.players.get(s.extractor);
         if (red) this.stopServerExtraction(red, "Counterhacked! Return after the server lockout.");
-        this.toAll("Counterhack SUCCESS: " + s.id + " lost 60% of its accumulated progress.");
+        this.toAll("Counterhack SUCCESS: " + s.id + " lost 50% of its accumulated progress.");
       } else {
         this.toTeam(
           "blue",
@@ -973,16 +1095,18 @@ class Game {
     this.pings.push({ kind, x, y, until: this.t + seconds });
   }
 
-  alertGuards(x, y, range, seconds) {
+  alertGuards(x, y, range, seconds, priority = -1) {
     for (const g of this.guards) {
       if (!g.alive || g.possessedBy || g.state === "chase") {
         continue;
       }
-      if (dist(g.x, g.y, x, y) <= range) {
+      if (dist(g.x, g.y, x, y) <= range &&
+          (priority < 0 || priority >= (g.alertPriority || -1))) {
         g.state = "investigate";
         g.target = { x, y };
         g.until = this.t + seconds;
         g.path = [];
+        g.alertPriority = priority;
       }
     }
   }
@@ -1024,11 +1148,35 @@ class Game {
   }
 
   // =============== COMBAT ===============
+  weaponRecoil(entity, weapon, time) {
+    const reset = weapon === "smg" ? C.smgRecoilResetSeconds : C.pistolRecoilResetSeconds;
+    if (entity.recoilWeapon !== weapon || time >= (entity.recoilResetAt || 0)) {
+      entity.recoilWeapon = weapon;
+      entity.recoilShots = 0;
+    }
+    const shot = entity.recoilShots++;
+    entity.recoilResetAt = time + reset;
+    const moving = entity.input && Math.hypot(entity.input.mx, entity.input.my) > 0;
+    const running = moving && entity.input.run;
+    if (weapon === "smg") {
+      const pattern = SMG_RECOIL_PATTERN[Math.min(shot, SMG_RECOIL_PATTERN.length - 1)];
+      const spread = running ? C.smgRunningSpread : moving ? C.smgMovingSpread : 0;
+      return pattern + (Math.random() - 0.5) * spread * 2;
+    }
+    const bloom = Math.min(0.28, Math.max(0, shot - 0.25) * C.pistolBloomPerShot);
+    const spread = bloom + (running ? C.pistolRunningSpread : moving ? C.pistolMovingSpread : 0);
+    return (Math.random() - 0.5) * spread * 2;
+  }
+
   fire(e, t) {
     const a = Math.atan2(e.input.ay - e.y, e.input.ax - e.x);
     e.aim = a;
     const isRed = e.kind === "red";
-    if (e.cur === "knife") {
+    if (e.cur === "pad") {
+      const player = isRed ? e : this.players.get(e.possessedBy);
+      if (player) this.usePad(e, player);
+      if (!e.hasPad && !e.pad) e.cur = "pistol";
+    } else if (e.cur === "knife") {
       if (t < e.nextShot) {
         return;
       }
@@ -1082,10 +1230,14 @@ class Game {
       if (!spec || !e.guns || !Object.hasOwn(e.guns, e.cur) || t < e.nextShot) {
         return;
       }
-      if (e.guns[e.cur] <= 0) return;
+      if (e.guns[e.cur] <= 0) {
+        this.startReload(e, e.kind === "red" ? e : this.players.get(e.possessedBy));
+        return;
+      }
       e.guns[e.cur]--;
+      if (e.guns[e.cur] === 0) this.startReload(e, e.kind === "red" ? e : this.players.get(e.possessedBy));
       e.nextShot = t + spec.cd;
-      this.spawnBullet(e, a + (Math.random() - 0.5) * spec.spread * 2, spec.dmg);
+      this.spawnBullet(e, a + (this.recoilEnabled ? this.weaponRecoil(e, e.cur, t) : 0), spec.dmg);
       if (isRed) {
         this.makeNoise(e.x, e.y);
         this.breakDisguiseIfSeen(e);
@@ -1186,6 +1338,8 @@ class Game {
       dispose: 0,
     });
     if (g.possessedBy) {
+      this.bluePool.cds = [];
+      this.alertPool.cds = [];
       const bp = this.players.get(g.possessedBy);
       if (bp) {
         this.releaseGuard(bp);
@@ -1216,7 +1370,7 @@ class Game {
       if (this.wallState.destroy(blast)) this.wallBlasts.push(blast);
     }
     this.explosions = (this.explosions || []).concat([
-      { x: gr.x, y: gr.y, until: this.t + 0.4 },
+      { x: gr.x, y: gr.y, until: this.t + 0.2 },
     ]);
   }
 
@@ -1307,15 +1461,25 @@ class Game {
 
   steer(e, input, speed, dt, blockDoors = true) {
     const len = Math.hypot(input.mx, input.my);
-    const tx = len > 0 ? (input.mx / len) * speed : 0;
-    const ty = len > 0 ? (input.my / len) * speed : 0;
-    const k = 1 - Math.exp(-14 * dt); // smooth acceleration
-    e.vx += (tx - e.vx) * k;
-    e.vy += (ty - e.vy) * k;
+    const multiplier = input.run && len > 0 ? C.runSpeedMultiplier : 1;
+    const tx = len > 0 ? (input.mx / len) * speed * multiplier : 0;
+    const ty = len > 0 ? (input.my / len) * speed * multiplier : 0;
+    if (len === 0) {
+      e.vx = 0;
+      e.vy = 0;
+    } else {
+      const k = 1 - Math.exp(-36 * dt);
+      e.vx += (tx - e.vx) * k;
+      e.vy += (ty - e.vy) * k;
+    }
+    const previousX = e.x;
+    const previousY = e.y;
     this.moveBody(e, e.vx * dt, e.vy * dt, blockDoors);
+    e.moving = Math.hypot(e.x - previousX, e.y - previousY) > 0.05;
   }
 
   tickRed(p, dt, t) {
+    this.finishReload(p);
     if (!p.alive) {
       if (p.respawnGame && p.respawnGame.readyAt !== null &&
           t - p.respawnGame.readyAt >= p.respawnGame.seconds &&
@@ -1338,7 +1502,7 @@ class Game {
     const previousX = p.x;
     const previousY = p.y;
     this.steer(p, inp, C.redSpeed, dt);
-    if (inp.fire) {
+    if (!p.reloading && inp.fire) {
       this.fire(p, t);
     }
 
@@ -1372,9 +1536,32 @@ class Game {
     }
     if (p.possessed) {
       const g = this.guards.find((x) => x.id === p.possessed);
-      // Radar allows movement but never shooting.
-      g.input = p.view === "shooter" ? p.input : { ...p.input, fire: false };
+      if (g) g.input = p.input;
     }
+  }
+
+  wallInDirection(x, y, dx, dy) {
+    const offsets = [0, -25, 25, -50, 50];
+    for (let distance = 20; distance <= Math.max(M.WORLD.w, M.WORLD.h); distance += 20) {
+      for (const offset of offsets) {
+        const px = x + dx * distance - dy * offset;
+        const py = y + dy * distance + dx * offset;
+        if (px < 0 || py < 0 || px > M.WORLD.w || py > M.WORLD.h) continue;
+        if (this.wallSolidsNear(px, py, 2).some((wall) =>
+          px >= wall.x && px <= wall.x + wall.w && py >= wall.y && py <= wall.y + wall.h)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  insideServerRoom(player) {
+    const horizontal = this.wallInDirection(player.x, player.y, -1, 0) &&
+      this.wallInDirection(player.x, player.y, 1, 0);
+    const vertical = this.wallInDirection(player.x, player.y, 0, -1) &&
+      this.wallInDirection(player.x, player.y, 0, 1);
+    return horizontal && vertical;
   }
 
   tickServers(dt, t) {
@@ -1389,6 +1576,10 @@ class Game {
       }
       if (this.empBlocksExtraction(player, s)) {
         this.stopServerExtraction(player, "EMP interrupted extraction. Progress was saved.");
+        continue;
+      }
+      if (!this.insideServerRoom(player)) {
+        this.stopServerExtraction(player, "Extraction cancelled: move back inside the server room.");
         continue;
       }
       const attempt = player.extraction;
@@ -1555,6 +1746,20 @@ class Game {
       return this.tickPossessed(g, dt, t);
     }
 
+    if (
+      this.latestManualAlert &&
+      this.latestManualAlert.until > t &&
+      this.latestManualAlert.sequence > (g.alertPriority || -1) &&
+      dist(g.x, g.y, this.latestManualAlert.x, this.latestManualAlert.y) <= C.alertRange &&
+      g.state !== "chase"
+    ) {
+      g.state = "investigate";
+      g.target = { x: this.latestManualAlert.x, y: this.latestManualAlert.y };
+      g.until = this.latestManualAlert.until;
+      g.path = [];
+      g.alertPriority = this.latestManualAlert.sequence;
+    }
+
     // 1) look for undisguised hackers and disguised players extracting a server
     let seen = null,
       best = 1e9;
@@ -1581,43 +1786,40 @@ class Game {
     }
 
     const activeExtractor = (player) =>
-      player && player.connected && player.alive && player.extraction &&
-      player.extraction.readyAt !== null;
+      player && player.connected && player.alive && player.extraction;
     let extractor = activeExtractor(this.players.get(g.extractionTarget))
       ? this.players.get(g.extractionTarget) : null;
     if (!extractor) {
-      let nearest = 800;
+      let nearest = Infinity;
       for (const player of this.livingReds()) {
         const distance = dist(g.x, g.y, player.x, player.y);
-        if (activeExtractor(player) && distance <= nearest) {
+        if (activeExtractor(player) && distance < nearest) {
           extractor = player;
           nearest = distance;
         }
       }
     }
 
-    if (seen) {
+    if (extractor) {
+      if (g.extractionTarget !== extractor.name) g.path = [];
+      g.state = "investigate";
+      g.target = { x: extractor.x, y: extractor.y };
+      g.until = t + C.guardInvestigationSeconds;
+      g.extractionTarget = extractor.name;
+      g.seenPlayer = null;
+      g.lastSeen = t;
+    } else if (seen) {
       g.state = "chase";
       g.target = { x: seen.x, y: seen.y };
       g.lastSeen = t;
       g.seenPlayer = seen;
-      g.extractionTarget = activeExtractor(seen) ? seen.name : null;
+      g.extractionTarget = null;
     } else {
-      const pursuingAnother = g.state === "chase" && g.seenPlayer &&
-        g.seenPlayer !== extractor && t - g.lastSeen <= 1.5;
-      if (extractor && !pursuingAnother) {
-        if (g.state !== "chase" || g.extractionTarget !== extractor.name) g.path = [];
-        g.state = "chase";
-        g.target = { x: extractor.x, y: extractor.y };
-        g.extractionTarget = extractor.name;
+      g.extractionTarget = null;
+      if (g.state === "chase" && t - g.lastSeen > 1.5) {
+        g.state = "investigate";
+        g.until = t + C.guardLostSightSeconds;
         g.seenPlayer = null;
-      } else {
-        g.extractionTarget = null;
-        if (g.state === "chase" && t - g.lastSeen > 1.5) {
-          g.state = "investigate";
-          g.until = t + C.guardLostSightSeconds;
-          g.seenPlayer = null;
-        }
       }
     }
     if (g.state === "investigate" && t > g.until) {
@@ -1647,7 +1849,7 @@ class Game {
         stand = true;
       } // close enough: stop and shoot
       if (seen && t >= g.nextShot && best < 380) {
-        g.nextShot = t + 0.8;
+        g.nextShot = t + 0.35;
         g.angle = Math.atan2(seen.y - g.y, seen.x - g.x);
         this.spawnBullet(g, g.angle + (Math.random() - 0.5) * 0.25, C.pistolDamage);
       }
@@ -1657,8 +1859,12 @@ class Game {
       const previousX = g.x;
       const previousY = g.y;
       if (!g.path.length || t >= g.repathAt) {
-        g.path = this.findWallPath(g.x, g.y, goal.x, goal.y);
-        g.repathAt = t + 0.6;
+        const avoidGuards = this.guards
+          .filter((other) => other !== g && other.alive && dist(g.x, g.y, other.x, other.y) < 180)
+          .map((other) => ({ x: other.x, y: other.y, radius: 30 }));
+        g.path = this.findWallPath(g.x, g.y, goal.x, goal.y, avoidGuards);
+        if (!g.path.length) g.path = this.findWallPath(g.x, g.y, goal.x, goal.y);
+        g.repathAt = t + 0.45 + (g.idx % 4) * 0.11;
       }
       const wp = g.path[0];
       if (wp) {
@@ -1668,7 +1874,21 @@ class Game {
         } else {
           const step = Math.min(d, speed * dt);
           const want = Math.atan2(wp.y - g.y, wp.x - g.x);
-          this.moveBody(g, ((wp.x - g.x) / d) * step, ((wp.y - g.y) / d) * step, false);
+          let moveX = (wp.x - g.x) / d;
+          let moveY = (wp.y - g.y) / d;
+          for (const other of this.guards) {
+            if (other === g || !other.alive) continue;
+            const dx = g.x - other.x;
+            const dy = g.y - other.y;
+            const distance = Math.hypot(dx, dy);
+            if (distance > 0 && distance < 46) {
+              const pressure = (46 - distance) / 46;
+              moveX += (dx / distance) * pressure * 0.85;
+              moveY += (dy / distance) * pressure * 0.85;
+            }
+          }
+          const moveLength = Math.hypot(moveX, moveY) || 1;
+          this.moveBody(g, (moveX / moveLength) * step, (moveY / moveLength) * step, false);
           if (!(g.state === "chase" && seen)) {
             g.angle += Math.max(-8 * dt, Math.min(8 * dt, angleDiff(want, g.angle)));
           }
@@ -1709,6 +1929,7 @@ class Game {
   }
 
   tickPossessed(g, dt, t) {
+    this.finishReload(g);
     const inp = g.input;
     g.aim = g.angle = Math.atan2(inp.ay - g.y, inp.ax - g.x);
     const previousX = g.x;
@@ -1717,7 +1938,7 @@ class Game {
     g.name = g.id;
     const player = this.players.get(g.possessedBy);
     if (player) this.collectLockers(g, previousX, previousY, player, t);
-    if (inp.fire) {
+    if (!g.reloading && inp.fire) {
       this.fire(g, t);
     }
   }
@@ -1776,8 +1997,12 @@ class Game {
           y: r(g.y),
           a: +g.angle.toFixed(2),
           hp: g.hp,
+          armor: g.armor,
           c: g.state === "chase" ? 1 : 0,
           p: g.possessedBy ? 1 : 0,
+          d: g.moving && g.input && g.input.run ? 1 : 0,
+          dx: g.input ? r(g.x - g.input.mx * 42) : r(g.x),
+          dy: g.input ? r(g.y - g.input.my * 42) : r(g.y),
         })),
       reds: this.livingReds()
         .filter((p) => p.name !== selfName && (see(p.x, p.y) || v.team === "red"))
@@ -1788,6 +2013,10 @@ class Game {
           a: +p.aim.toFixed(2),
           dg: p.disguise ? 1 : 0,
           hp: p.hp,
+          armor: p.armor,
+          d: p.moving && p.input.run ? 1 : 0,
+          dx: r(p.x - p.input.mx * 42),
+          dy: r(p.y - p.input.my * 42),
         })),
       bullets: this.bullets
         .filter((b) => see(b.x, b.y))
@@ -1815,7 +2044,11 @@ class Game {
         })),
       boom: (this.explosions || [])
         .filter((e) => see(e.x, e.y))
-        .map((e) => ({ x: r(e.x), y: r(e.y) })),
+        .map((e) => ({
+          x: r(e.x),
+          y: r(e.y),
+          p: Math.max(0, Math.min(1, 1 - (e.until - this.t) / 0.2)),
+        })),
     };
   }
 
@@ -1899,6 +2132,12 @@ class Game {
         disguised: !!p.disguise,
         charges: this.chargeStatus(this.redPool),
         disposing: p.disposing,
+        reloading: p.reloading,
+        reloadProgress: p.reloading
+          ? Math.max(0, Math.min(1, 1 - (p.reloadAt - t) / p.reloadDuration)) : 0,
+        d: p.moving && p.input.run ? 1 : 0,
+        dx: r(p.x - p.input.mx * 42),
+        dy: r(p.y - p.input.my * 42),
         respawnLeft: p.alive
           ? 0
           : Math.max(0, Math.ceil(C.respawnMaxSeconds - (t - p.deadAt))),
@@ -1945,6 +2184,7 @@ class Game {
             n: rp.name,
             a: +rp.aim.toFixed(2),
             hp: rp.hp,
+            armor: rp.armor,
           })),
       );
       // Only report current detections; lastSeen/target may otherwise retain stale positions.
@@ -1977,13 +2217,14 @@ class Game {
           y: r(red.y),
           a: +red.aim.toFixed(2),
           hp: red.hp,
+          armor: red.armor,
         }));
       snap.me = {
         view: p.view,
         possessed: !!g,
         charges: this.chargeStatus(this.bluePool),
         darkCd: Math.max(0, Math.ceil(this.lightsCdUntil - t)),
-        alertCd: Math.max(0, Math.ceil(this.alertCdUntil - t)),
+        alertCd: this.chargeStatus(this.alertPool),
         empCd: Math.max(0, Math.ceil(this.empCdUntil - t)),
         possessCd: Math.max(0, Math.ceil(p.possessCdUntil - t)),
       };
@@ -2032,6 +2273,7 @@ class Game {
                 a: +red.aim.toFixed(2),
                 dg: 0,
                 hp: red.hp,
+                armor: red.armor,
                 cameraDetected: 1,
               });
             } else {
@@ -2044,6 +2286,7 @@ class Game {
                   a: +red.aim.toFixed(2),
                   dg: red.disguise ? 1 : 0,
                   hp: red.hp,
+                  armor: red.armor,
                   tracked: 1,
                 });
               } else {
@@ -2064,6 +2307,12 @@ class Game {
           grenades: g.grenades,
           hasPad: g.hasPad,
           padSet: !!g.pad,
+          reloading: g.reloading,
+          reloadProgress: g.reloading
+            ? Math.max(0, Math.min(1, 1 - (g.reloadAt - t) / g.reloadDuration)) : 0,
+          d: g.moving && g.input && g.input.run ? 1 : 0,
+          dx: g.input ? r(g.x - g.input.mx * 42) : r(g.x),
+          dy: g.input ? r(g.y - g.input.my * 42) : r(g.y),
         };
       }
     }

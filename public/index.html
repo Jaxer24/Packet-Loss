@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Packet Loss</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=lobby-controls-10">
+  <link rel="stylesheet" href="style.css?v=control-overhaul-11">
 </head>
 <body>
   <audio id="backgroundMusic" src="EXITUS%20-%20Dark%20Techno%20Industrial%20-%20Copyright%20Free%20Music.mp3" loop preload="none"></audio>
@@ -15,6 +15,15 @@
       <button id="musicToggle" class="alt small" type="button">Pause music</button>
       <label for="musicVolume">Music volume: <span id="musicVolumeValue">5%</span></label>
       <input id="musicVolume" type="range" min="0" max="100" step="1" value="5">
+      <div id="teamControls">
+        <div class="hud-heading">Controls</div>
+        <div id="teamControlsBody">Join a team to view controls.</div>
+      </div>
+      <div id="roomControls">
+        <div class="hud-heading">Lobby</div>
+        <div>Code: <strong id="gameLobbyCode"></strong></div>
+        <button id="btnLeaveGame" class="alt small">Leave lobby</button>
+      </div>
     </div>
     <span id="musicStatus" role="status"></span>
   </div>
@@ -24,7 +33,7 @@
       <h1>PACKET LOSS</h1>
       <p class="sub">Asymmetric hacker vs. security prototype</p>
       <input id="user" placeholder="username (3-24 letters/numbers/_)" autocomplete="username">
-      <input id="pass" type="password" placeholder="password (8+ characters)" autocomplete="current-password">
+      <input id="pass" type="password" placeholder="password (4+ characters)" autocomplete="current-password">
       <div class="row">
         <button id="btnLogin">Log in</button>
         <button id="btnRegister" class="alt">Register</button>
@@ -54,25 +63,22 @@
         <div class="lobby-team-guides">
           <div class="lobby-guide-team red">
             <h3>RED - HACKERS</h3>
-            <p class="lobby-goal"><strong>Goal:</strong> Hack the servers.</p>
-            <p><strong>WASD</strong>: Move | <strong>Mouse</strong>: Aim / shoot</p>
-            <p><strong>Q</strong>: Knife | <strong>E</strong>: Cycle Weapons</p>
-            <p><strong>Z</strong>: Steal ID | <strong>X</strong>: Dispose Corpse</p>
-            <p><strong>F + click</strong>: Hack</p>
-            <p><strong>Space</strong>: Teleport Pad</p>
-            <p><strong>Tab</strong>: Radar</p>
-            <p>Stand near server to hack it.</p>
+            <p class="lobby-goal"><strong>Goal:</strong> Hack servers.</p>
+            <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move · Hold <kbd>Shift</kbd> Run</p>
+            <p><span class="mouse-symbol">LMB</span> Fire/use item · <span class="mouse-symbol">RMB</span> Hack nearby target</p>
+            <p><kbd>R</kbd> Reload · <kbd>1</kbd>–<kbd>5</kbd> or <span class="mouse-symbol">Wheel</span> Select equipment</p>
+            <p><kbd>Space</kbd> Steal nametag / hold to dispose corpse</p>
+            <p><kbd>Tab</kbd> Radar · <kbd>Esc</kbd> Close radar</p>
           </div>
           <div class="lobby-guide-team blue">
             <h3>BLUE - SECURITY</h3>
-            <p class="lobby-goal"><strong>Goal:</strong> Protect the servers.</p>
-            <p><strong>WASD</strong>: Move | <strong>Mouse</strong>: Aim / shoot</p>
-            <p><strong>Q</strong>: Knife | <strong>E</strong>: Cycle Weapons</p>
-            <p><strong>Z</strong>: Alert Guards | <strong>X</strong>: EMP</p>
-            <p><strong>F + click</strong>: Counter-Hack </p>
-            <p><strong>Space</strong>: Teleport pad</p>
-            <p><strong>Tab</strong>: Radar (Click a guard to control it)</p>
-            <p>Click hacked servers on radar to counterhack</p>
+            <p class="lobby-goal"><strong>Goal:</strong> Protect servers.</p>
+            <p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move · Hold <kbd>Shift</kbd> Run</p>
+            <p><span class="mouse-symbol">LMB</span> Fire/use item · <kbd>R</kbd> Reload</p>
+            <p><kbd>1</kbd>–<kbd>5</kbd> or <span class="mouse-symbol">Wheel</span> Select equipment</p>
+            <p><kbd>Tab</kbd> Radar / release possessed guard</p>
+            <p>Radar: <span class="mouse-symbol">LMB</span> Guard/object · <span class="mouse-symbol">RMB</span> Alert</p>
+            <p>Use the lower-right buttons for Blackout and EMP</p>
           </div>
         </div>
       </details>
@@ -82,6 +88,7 @@
       </div>
       <p id="spectatorList" class="sub"></p>
       <p id="lobbyMsg" class="sub"></p>
+      <button id="btnRecoil" class="alt small hidden">Recoil: ON</button>
       <button id="btnStart" class="hidden">Start match (host)</button>
       <button id="btnLeaveLobby" class="alt">Leave lobby</button>
       </div>
@@ -94,9 +101,16 @@
     <div id="hud" aria-label="Match status"></div>
     <div id="matchStatus" aria-label="Match time"></div>
     <div id="serverStatus" aria-label="Server progress"></div>
+    <div id="blueRadarControls" class="hidden" aria-label="Blue radar abilities">
+      <button id="blueBlackout" type="button" data-tooltip="Turn off the lights for the Red team.">Blackout</button>
+      <button id="blueEmp" type="button" data-tooltip="Arm an EMP, then click the radar to place it.">EMP</button>
+    </div>
     <div id="log" role="log" aria-live="polite" aria-label="Game notifications"></div>
     <div id="hint" aria-label="Contextual controls"></div>
-    <div id="roomControls"><button id="btnLeaveGame" class="alt small">Leave lobby</button><span> Lobby code: <strong id="gameLobbyCode"></strong></span></div>
+    <div id="bottomLeftHud">
+      <div id="equipmentQuick" aria-label="Equipped item"></div>
+      <div id="chargeQuick" aria-label="Hacking charges"></div>
+    </div>
     <div id="counter" class="overlay hidden">
       <div class="card minigame-card">
         <h2 id="minigameTitle">MINIGAME</h2>
@@ -120,6 +134,6 @@
 
   <script src="minigames.js?v=faster-challenges-22"></script>
   <script src="wall-destruction.js?v=1"></script>
-  <script src="client.js?v=zx-controls-57"></script>
+  <script src="client.js?v=equipment-wheel-62"></script>
 </body>
 </html>

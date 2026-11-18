@@ -11,7 +11,7 @@ module.exports = {
   guardRespawnSeconds: 20,
   guardHp: 6,
   guardPatrolSpeed: 350,
-  guardChaseSpeed: 450,
+  guardChaseSpeed: 60,
   guardFovDegrees: 100,
   guardSightRange: 420,
 
@@ -19,7 +19,8 @@ module.exports = {
   playerRadius: 12,
   redHp: 10,
   redMaxArmor: 10,
-  redSpeed: 400,
+  redSpeed: 300,
+  runSpeedMultiplier: 1.65,
   respawnMaxSeconds: 30,
   serverHackSeconds: 20,
   serverChallengeEntrySeconds: 10,
@@ -27,7 +28,7 @@ module.exports = {
   serverCounterLockoutSeconds: 5,
   serverCounterCooldownSeconds: 20,
   remoteHackCharges: 3, // for a one-player team
-  remoteHackRechargeSeconds: 60, // each charge recharges on its own timer
+  remoteHackRechargeSeconds: 10,
   cameraHackSeconds: 45, // unused: camera hacks now last until Blue restores them
   doorHackSeconds: 120, // unused: doors now remain open until Blue closes them
   laserHackSeconds: 60, // unused: laser hacks now last until Blue restores them
@@ -37,10 +38,11 @@ module.exports = {
 
   // Blue team
   blueSecurityCharges: 2,
-  blueSecurityRechargeSeconds: 60,
+  blueSecurityRechargeSeconds: 25,
+  counterhackProgressMultiplier: 0.5,
   blueSecurityActivationSeconds: 120, // unused: lasers are active until hacked
   possessionCooldownSeconds: 0,
-  possessedSpeed: 400,
+  possessedSpeed: 300,
   possessedRedTrackingSeconds: 10,
   lightsBlackoutSeconds: 60,
   lightsCooldownSeconds: 120,
@@ -58,16 +60,25 @@ module.exports = {
   teamChargeMultiplier: 0.5,
 
   // Combat
-  pistolAmmo: 300,
-  smgAmmo: 200,
+  pistolAmmo: 7,
+  smgAmmo: 30,
+  pistolReloadSeconds: 1.2,
+  smgReloadSeconds: 1.8,
   maxGrenades: 5,
   pistolDamage: 2,
   smgDamage: 1,
+  pistolRecoilResetSeconds: 0.55,
+  pistolMovingSpread: 0.075,
+  pistolRunningSpread: 0.14,
+  pistolBloomPerShot: 0.055,
+  smgRecoilResetSeconds: 0.3,
+  smgMovingSpread: 0.045,
+  smgRunningSpread: 0.095,
   knifeDamage: 8,
   grenadeDamage: 8,
   grenadeRadius: 90,
   laserDamage: 2,
-  bulletSpeed: 600,
+  bulletSpeed: 400,
 
   // Vision (pixels)
   visionRadiusLit: 650,

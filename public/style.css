@@ -18,7 +18,11 @@ button.small { padding: 3px 8px; font-size: 12px; }
 #lobbySelect label { display: block; margin-top: 16px; }
 #lobbySelect .row input { flex: 1; min-width: 0; }
 #lobbyRoom > button { margin: 4px 4px 4px 0; }
-#roomControls { position: fixed; left: 12px; bottom: 12px; z-index: 2; padding: 4px; background: rgba(8, 15, 23, .93); border-radius: 4px; font-size: 12px; }
+#roomControls, #teamControls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #42546b; display: grid; gap: 7px; color: #d7e0ea; font-size: 12px; }
+#teamControlsBody { display: grid; gap: 6px; line-height: 1.5; }
+#teamControlsBody p, .lobby-guide-team p { margin: 2px 0; }
+kbd { display: inline-block; min-width: 20px; margin-right: 2px; padding: 1px 5px; border: 1px solid #718196; border-bottom-width: 2px; border-radius: 4px; background: #172332; color: #fff; font: 700 11px Consolas, monospace; text-align: center; }
+.mouse-symbol { display: inline-block; padding: 1px 5px; border: 1px solid #718196; border-radius: 4px; background: #263548; color: #dbe8f4; font: 700 10px Consolas, monospace; }
 .error { color: #ff6b6b; min-height: 1.2em; }
 .teams { display: flex; gap: 20px; }
 .teams > div { flex: 1; border: 1px solid #2c3a4d; padding: 10px; border-radius: 6px; }
@@ -46,11 +50,35 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
 #hud { position: fixed; left: 12px; top: 12px; width: min(480px, calc(50vw - 95px)); display: grid; gap: 6px; font-size: 13px; pointer-events: none; }
 #matchStatus { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; z-index: 1; }
 #serverStatus { position: fixed; right: 12px; bottom: 12px; max-width: 25vw; font-size: 13px; pointer-events: none; }
+.server-meters { display: flex; gap: 10px; align-items: flex-end; }
+.server-meter { width: 30px; height: 74px; position: relative; border: 1px solid #607086; border-radius: 4px; overflow: hidden; background: rgba(8,15,23,.88); }
+.server-meter-fill { position: absolute; left: 0; right: 0; bottom: 0; background: #ffd34d; }
+.server-meter.done .server-meter-fill { background: #6ff2a8; }
+.server-meter-label { position: absolute; left: 0; right: 0; bottom: 4px; color: #fff; text-align: center; font-size: 10px; font-weight: bold; text-shadow: 0 1px 2px #000; }
+#bottomLeftHud { position: fixed; left: 14px; bottom: 14px; z-index: 2; display: grid; gap: 6px; pointer-events: none; }
+#equipmentQuick { position: relative; display: flex; align-items: center; gap: 10px; min-width: 92px; padding: 8px 10px; background: rgba(8,15,23,.86); border: 1px solid #42546b; border-radius: 7px; color: #fff; }
+#equipmentQuick:empty { display: none; }
+#equipmentQuick img { width: 62px; height: 48px; object-fit: fill; image-rendering: pixelated; }
+.equipment-ammo { font-size: 21px; font-weight: bold; font-variant-numeric: tabular-nums; }
+#chargeQuick { padding: 6px 8px; background: rgba(8,15,23,.86); border: 1px solid #42546b; border-radius: 7px; }
+#chargeQuick:empty { display: none; }
+#chargeQuick .charge-label { display: block; margin-bottom: 4px; }
+.equipment-caption { color: #a9bfce; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; }
+#blueRadarControls { position: fixed; right: 12px; bottom: 110px; z-index: 4; display: flex; gap: 8px; }
+#blueRadarControls button { position: relative; background: #255f93; min-width: 92px; }
+#blueRadarControls button[aria-pressed="true"] { box-shadow: 0 0 0 3px #87c8ff, 0 0 18px #5ab0ff; }
+#blueRadarControls button:disabled { cursor: not-allowed; filter: grayscale(.7) brightness(.65); }
+#blueRadarControls button::after { content: attr(data-tooltip); position: absolute; right: 0; bottom: calc(100% + 8px); width: 220px; padding: 7px 9px; color: #fff; background: rgba(8, 15, 23, .96); border: 1px solid #5ab0ff; border-radius: 5px; font-size: 12px; line-height: 1.35; text-align: left; pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; }
+#blueRadarControls button:hover::after, #blueRadarControls button:focus-visible::after { opacity: 1; transform: translateY(0); }
 .hud-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
 .hud-panel { background: rgba(8, 15, 23, .4); border: 1px solid #42546b; border-radius: 6px; padding: 7px 10px; box-shadow: 0 2px 8px #0009; }
 .hud-equipment { flex: 1 1 120px; min-width: 0; }
 .hud-heading { color: #a9bfce; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px; }
 .hud-values { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; }
+.charge-label { color: #a9bfce; font-size: 10px; font-weight: bold; letter-spacing: 1px; }
+.charge-cells { display: inline-flex; gap: 4px; align-items: center; }
+.charge-cell { display: block; width: 34px; height: 12px; padding: 1px; border: 1px solid #718196; border-radius: 3px; background: rgba(8,15,23,.9); overflow: hidden; }
+.charge-cell > span { display: block; height: 100%; border-radius: 1px; transition: width .15s linear; }
 .hud-stat { white-space: nowrap; color: #d7e0ea; }
 .hud-stat strong { color: #fff; }
 .hud-stat.ready strong, .hud-stat.done strong { color: #6ff2a8; }
@@ -64,10 +92,10 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
 .hud-meter span { display: block; height: 100%; background: #6ff2a8; }
 .hud-meter.armor span { background: #5ab0ff; }
 .hud-meter.low span { background: #ff657d; }
-#log { position: fixed; left: 12px; bottom: 58px; font-size: 13px; pointer-events: none; width: min(380px, calc(100vw - 24px)); display: grid; gap: 5px; }
+#log { position: fixed; left: 12px; top: 58px; font-size: 13px; pointer-events: none; width: min(360px, calc(100vw - 24px)); display: grid; gap: 5px; z-index: 2; }
 #log div { background: rgba(8, 15, 23, .4); color: #f0f7fc; padding: 8px 10px; border: 1px solid #42546b; border-left: 3px solid #6ff2a8; border-radius: 5px; line-height: 1.35; box-shadow: 0 2px 8px #0009; overflow-wrap: anywhere; }
 #log div::before { content: "UPDATE"; display: block; color: #6ff2a8; font-size: 10px; font-weight: bold; letter-spacing: 1px; margin-bottom: 2px; }
-#hint { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: 45vw; padding: 7px 12px; background: rgba(8, 15, 23, .4); border: 1px solid #77672f; border-radius: 6px; color: #ffe58a; text-align: center; font-size: 13px; line-height: 1.35; box-shadow: 0 2px 8px #0009; pointer-events: none; }
+#hint { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: 45vw; padding: 7px 12px; background: rgba(8, 15, 23, .88); border: 1px solid #77672f; border-radius: 6px; color: #ffe58a; text-align: center; font-size: 13px; line-height: 1.35; box-shadow: 0 2px 8px #0009; pointer-events: none; }
 #hint:empty { display: none; }
 @media (min-width: 641px) {
   #game.extraction-active #hud { width: min(480px, calc(100vw - 500px)); }
@@ -80,12 +108,13 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
   .hud-row { gap: 3px; }
   .hud-panel { padding: 5px 7px; }
   .hud-clock { font-size: 16px; }
-  #log { left: 6px; bottom: 70px; width: min(300px, calc(100vw - 12px)); font-size: 12px; }
+  #log { left: 6px; top: 52px; width: min(300px, calc(100vw - 12px)); font-size: 12px; }
   #hint { bottom: 6px; max-width: 45vw; font-size: 12px; }
 }
 .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000c; }
-#counter:not(.extraction-overlay) { background: transparent; }
+#counter.transparent-minigame { background: transparent; }
 .extraction-overlay { justify-content: flex-end; align-items: flex-start; background: transparent; pointer-events: none; padding: 55px 12px 12px; }
 .extraction-overlay .card { pointer-events: auto; }
-.minigame-card { width: 460px; max-height: 94vh; overflow: auto; background: rgba(18, 25, 35, 0.4); }
+.minigame-card { width: 460px; max-height: 94vh; overflow: auto; background: #121923; }
+#counter.transparent-minigame .minigame-card { background: rgba(18, 25, 35, 0.4); }
 #minigameCanvas { position: static; display: block; width: 100%; height: auto; aspect-ratio: 5 / 3; border: 1px solid #5ab0ff; cursor: crosshair; touch-action: none; }

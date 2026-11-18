@@ -6,12 +6,13 @@ const GATE_SPEED = 175;
 const METEOR_SPEED_MULTIPLIER = 1.25;
 
 class MouseMinigame {
-  constructor(canvas, type, seconds, finish, onStart = () => {}, entrySeconds = null) {
+  constructor(canvas, type, seconds, finish, onStart = () => {}, entrySeconds = null, difficulty = 0) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.type = type;
     this.seconds = seconds;
     this.entrySeconds = entrySeconds;
+    this.difficulty = Math.max(0, Math.min(1, difficulty));
     this.finish = finish;
     this.onStart = onStart;
     this.started = performance.now();
@@ -26,13 +27,20 @@ class MouseMinigame {
       delay: i * 0.3,
       speed: (85 + Math.random() * 35) * METEOR_SPEED_MULTIPLIER,
     }));
+    this.dots = Array.from({ length: 18 }, (_, i) => ({
+      x: 28 + (i % 6) * 68,
+      y: 30 + Math.floor(i / 6) * 80,
+      taken: false,
+    }));
+    this.routeNodes = Array.from({ length: 6 }, (_, i) => ({
+      x: 45 + (i % 3) * 155,
+      y: 55 + Math.floor(i / 3) * 125,
+    }));
+    this.routeIndex = 0;
     this.onMove = this.onMove.bind(this);
     this.onDown = this.onDown.bind(this);
-    this.onLeave = this.onLeave.bind(this);
     canvas.addEventListener("pointerdown", this.onDown);
-    canvas.addEventListener("pointerenter", this.onMove);
-    canvas.addEventListener("pointermove", this.onMove);
-    canvas.addEventListener("pointerleave", this.onLeave);
+    window.addEventListener("pointermove", this.onMove);
   }
 
   createMaze(start) {
@@ -64,6 +72,8 @@ class MouseMinigame {
     if (position.x < 0 || position.x > this.canvas.width ||
         position.y < 0 || position.y > this.canvas.height) return;
     if (this.type === "maze") this.createMaze(position);
+    if (this.type === "orbit") this.orbitOrigin = position;
+    if (this.type === "scanner") this.scannerOrigin = position;
     this.pointer = position;
     this.beginPlaying();
   }
@@ -71,6 +81,10 @@ class MouseMinigame {
   onMove(event) {
     if (this.ended || this.playStarted === null) return;
     const next = this.eventPosition(event);
+    if (this.type !== "maze") {
+      next.x = Math.max(0, Math.min(this.canvas.width, next.x));
+      next.y = Math.max(0, Math.min(this.canvas.height, next.y));
+    }
     if (this.type === "maze") {
       const trail = this.mazeTrail(performance.now());
       if (this.onMazeTrail(this.pointer, trail)) {
@@ -97,6 +111,16 @@ class MouseMinigame {
       if (this.mazeIndex === this.maze.length - 1) this.createMaze(next);
     } else {
       this.pointer = next;
+      if (this.type === "routing") {
+        const target = this.routeNodes[this.routeIndex];
+        if (target && Math.hypot(next.x - target.x, next.y - target.y) < 20) {
+          this.routeIndex++;
+          if (this.routeIndex >= this.routeNodes.length) {
+            this.routeIndex = 0;
+            this.routeNodes.reverse();
+          }
+        }
+      }
     }
   }
 
@@ -131,8 +155,7 @@ class MouseMinigame {
   }
 
   mazeTrail(now) {
-    let remaining = Math.max(0, (now - this.mazeStarted) / 1000 - MAZE_TRAIL_DELAY_SECONDS) * MAZE_TRAIL_SPEED;
-    if (remaining === 0) return [];
+    let remaining = Math.max(0,     (now - this.mazeStarted) / 1000 - (MAZE_TRAIL_DELAY_SECONDS * (1 - this.difficulty * 0.6))) * MAZE_TRAIL_SPEED * (1 + this.difficulty);    if (remaining === 0) return [];
     const trail = [this.maze[0]];
     for (let i = 1; i < this.maze.length; i++) {
       const start = this.maze[i - 1], end = this.maze[i];
@@ -151,10 +174,6 @@ class MouseMinigame {
     return trail;
   }
 
-  onLeave() {
-    if (this.pointer) this.end(false, "Your cursor left the game area.");
-  }
-
   timeoutReason() {
     return this.playStarted === null
       ? "Time ran out before you clicked to start."
@@ -165,9 +184,7 @@ class MouseMinigame {
     if (this.ended) return;
     this.ended = true;
     this.canvas.removeEventListener("pointerdown", this.onDown);
-    this.canvas.removeEventListener("pointerenter", this.onMove);
-    this.canvas.removeEventListener("pointermove", this.onMove);
-    this.canvas.removeEventListener("pointerleave", this.onLeave);
+    window.removeEventListener("pointermove", this.onMove);
     this.finish(success, reason);
   }
 
@@ -210,10 +227,14 @@ class MouseMinigame {
         ctx.stroke();
       }
     } else if (this.type === "flappy") {
-      const firstGate = Math.max(0, Math.floor((elapsed * GATE_SPEED - 444) / 135));
-      const lastGate = Math.floor(elapsed * GATE_SPEED / 135) + 1;
+      const gateSpeed = GATE_SPEED * (1 + this.difficulty * 0.55);
+      const spacing = Math.max(95, 135 - this.difficulty * 25);
+      const firstGate = Math.max(0, Math.floor((elapsed * gateSpeed - 444) / spacing));
+      const lastGate = Math.floor(elapsed * gateSpeed / spacing) + 1;
       for (let i = firstGate; i <= lastGate; i++) {
-        const x = 420 + i * 135 - elapsed * GATE_SPEED;
+        const gateSpeed = GATE_SPEED * (1 + this.difficulty * 0.55);
+        const spacing = Math.max(95, 135 - this.difficulty * 25);
+        const x = 420 + i * spacing - elapsed * gateSpeed;
         const gap = this.gaps[i % this.gaps.length];
         ctx.fillStyle = "#5ab0ff";
         ctx.fillRect(x, 0, 24, gap - 42);
@@ -225,7 +246,8 @@ class MouseMinigame {
     } else if (this.type === "meteors") {
       for (const meteor of this.meteors) {
         if (elapsed < meteor.delay) continue;
-        const y = ((elapsed - meteor.delay) % 6) * meteor.speed - 12;
+        const speed = meteor.speed * (1 + this.difficulty * 0.65);
+        const y = ((elapsed - meteor.delay) % 6) * speed - 12;
         if (y < -12 || y > 252) continue;
         ctx.fillStyle = "#ff8866";
         ctx.beginPath(); ctx.arc(meteor.x, y, 12, 0, Math.PI * 2); ctx.fill();
@@ -233,6 +255,42 @@ class MouseMinigame {
           return this.end(false, "A meteor hit your yellow marker.");
         }
       }
+    } else if (this.type === "pacman") {
+      for (const dot of this.dots) {
+        if (!dot.taken && this.pointer && Math.hypot(this.pointer.x - dot.x, this.pointer.y - dot.y) < 13) dot.taken = true;
+        ctx.fillStyle = dot.taken ? "#263548" : "#ffe98a";
+        ctx.beginPath(); ctx.arc(dot.x, dot.y, 4, 0, Math.PI * 2); ctx.fill();
+      }
+      if (this.dots.every((dot) => dot.taken)) this.dots.forEach((dot) => { dot.taken = false; });
+      for (let i = 0; i < 3; i++) {
+        const ghostSpeed = 1 + this.difficulty * 0.7;
+        const x = 200 + Math.sin(elapsed * ghostSpeed * (0.9 + i * 0.18) + i * 2.1) * (155 - i * 20);
+        const y = 120 + Math.cos(elapsed * ghostSpeed * (1.1 + i * 0.22) + i * 1.7) * (80 - i * 12);
+        ctx.fillStyle = ["#ff5c7a", "#8a7dff", "#5ab0ff"][i];
+        ctx.beginPath(); ctx.arc(x, y, 12, Math.PI, 0); ctx.lineTo(x + 12, y + 12); ctx.lineTo(x, y + 7); ctx.lineTo(x - 12, y + 12); ctx.closePath(); ctx.fill();
+        if (this.pointer && Math.hypot(this.pointer.x - x, this.pointer.y - y) < 20) return this.end(false, "A ghost caught your cursor.");
+      }
+    } else if (this.type === "routing") {
+      this.routeNodes.forEach((node, index) => {
+        ctx.strokeStyle = index === this.routeIndex ? "#ffd34d" : index < this.routeIndex ? "#6ff2a8" : "#5b7394";
+        ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(node.x, node.y, 17, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Consolas"; ctx.textAlign = "center"; ctx.fillText(index + 1, node.x, node.y + 5);
+      });
+    } else if (this.type === "orbit") {
+      const angle = elapsed * 1.8 * (1 + this.difficulty * 0.55);
+      const origin = this.orbitOrigin || { x: 200, y: 120 };
+      const x = Math.max(35, Math.min(365, origin.x + Math.sin(angle) * 82));
+      const y = Math.max(35, Math.min(205, origin.y + (Math.cos(angle) - 1) * 48));
+      const radius = 42 - this.difficulty * 10;
+      ctx.strokeStyle = "#5ab0ff"; ctx.lineWidth = 20; ctx.beginPath(); ctx.arc(x, y, radius, 0, Math.PI * 2); ctx.stroke();
+      if (this.pointer && Math.hypot(this.pointer.x - x, this.pointer.y - y) > radius + 10) return this.end(false, "You lost the moving orbit lock.");
+    } else if (this.type === "scanner") {
+      const origin = this.scannerOrigin || { x: 200 };
+      const x = 40 + ((origin.x - 40 + elapsed * (70 + this.difficulty * 55)) % 320);
+      const width = 34 - this.difficulty * 10;
+      ctx.fillStyle = "rgba(60,220,140,.18)"; ctx.fillRect(x - width, 18, width * 2, 204);
+      ctx.strokeStyle = "#6ff2a8"; ctx.lineWidth = 3; ctx.strokeRect(x - width, 18, width * 2, 204);
+      if (this.pointer && Math.abs(this.pointer.x - x) > width) return this.end(false, "You moved outside the scanner zone.");
     }
     if (this.pointer) {
       ctx.fillStyle = "#ffd34d";
