@@ -1,5 +1,11 @@
 * { box-sizing: border-box; }
-body { margin: 0; background: #080b10; color: #d7e0ea; font-family: Consolas, "Courier New", monospace; overflow: hidden; }
+body { margin: 0; background: #080b10; color: #d7e0ea; font-family: Consolas, "Courier New", monospace; overflow: hidden; scrollbar-width: thin; scrollbar-color: #2fd17a #0e151e; }
+* { scrollbar-width: thin; scrollbar-color: #2fd17a #0e151e; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: #0e151e; border-left: 1px solid #2c3a4d; box-shadow: inset 0 0 6px #000; }
+::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #49d991, #1a8254); border: 2px solid #0e151e; border-radius: 8px; box-shadow: 0 0 7px rgba(47,209,122,.45); }
+::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #70efad, #2fa86d); }
+::-webkit-scrollbar-corner { background: #0e151e; }
 .hidden { display: none !important; }
 .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
 #game { display: block; }
@@ -20,6 +26,21 @@ button.small { padding: 3px 8px; font-size: 12px; }
 #lobbyRoom > button { margin: 4px 4px 4px 0; }
 #roomControls, #teamControls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #42546b; display: grid; gap: 7px; color: #d7e0ea; font-size: 12px; }
 #teamControlsBody { display: grid; gap: 6px; line-height: 1.5; }
+.controls-art { display: block; width: 100%; max-height: 680px; object-fit: contain; }
+#teamControlsBody .controls-art { max-height: 430px; }
+.controls-diagram { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 18px; padding: 10px 4px; }
+.control-node { display: grid; grid-template-columns: 76px minmax(18px, 1fr) auto; align-items: center; gap: 7px; min-height: 58px; }
+.control-node b { color: #dce7f1; font-size: 11px; letter-spacing: .7px; white-space: nowrap; }
+.control-line { height: 1px; background: #718196; position: relative; }
+.control-line::after { content: ""; position: absolute; right: -1px; top: -3px; border: 3px solid transparent; border-left-color: #a9bfce; }
+.wasd-keys { display: grid; justify-items: center; gap: 2px; }
+.wasd-keys span { display: flex; gap: 2px; }
+.control-node kbd, .equipment-key-row kbd { min-width: 21px; padding: 4px 6px; font-size: 12px; }
+.control-node .wide-key { min-width: 64px; }
+.mouse-key { width: 58px; padding: 15px 6px; border: 2px solid #718196; border-radius: 22px 22px 12px 12px; background: #172332; color: #fff; text-align: center; font: bold 11px Consolas, monospace; }
+.equipment-key-row { display: flex; align-items: center; justify-content: center; gap: 5px; padding-top: 10px; border-top: 1px solid #2c3a4d; color: #a9bfce; font-size: 11px; }
+#teamControlsBody .controls-diagram { grid-template-columns: 1fr; }
+#teamControlsBody .control-node { grid-template-columns: 70px minmax(20px, 1fr) auto; }
 #teamControlsBody p, .lobby-guide-team p { margin: 2px 0; }
 kbd { display: inline-block; min-width: 20px; margin-right: 2px; padding: 1px 5px; border: 1px solid #718196; border-bottom-width: 2px; border-radius: 4px; background: #172332; color: #fff; font: 700 11px Consolas, monospace; text-align: center; }
 .mouse-symbol { display: inline-block; padding: 1px 5px; border: 1px solid #718196; border-radius: 4px; background: #263548; color: #dbe8f4; font: 700 10px Consolas, monospace; }

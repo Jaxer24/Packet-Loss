@@ -1847,11 +1847,20 @@ class Game {
       speed = C.guardChaseSpeed;
       if (seen && best < 260) {
         stand = true;
-      } // close enough: stop and shoot
-      if (seen && t >= g.nextShot && best < 380) {
+      }
+    }
+
+    const trackedExtractor = g.extractionTarget
+      ? this.players.get(g.extractionTarget) : null;
+    const shotTarget = seen || (trackedExtractor && this.guardSees(
+      g, trackedExtractor.x, trackedExtractor.y,
+    ) ? trackedExtractor : null);
+    if (shotTarget) {
+      const shotDistance = dist(g.x, g.y, shotTarget.x, shotTarget.y);
+      if (t >= g.nextShot && shotDistance < 420) {
         g.nextShot = t + 0.35;
-        g.angle = Math.atan2(seen.y - g.y, seen.x - g.x);
-        this.spawnBullet(g, g.angle + (Math.random() - 0.5) * 0.25, C.pistolDamage);
+        g.angle = Math.atan2(shotTarget.y - g.y, shotTarget.x - g.x);
+        this.spawnBullet(g, g.angle + (Math.random() - 0.5) * 0.2, C.pistolDamage);
       }
     }
 

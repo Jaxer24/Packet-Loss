@@ -336,19 +336,10 @@ function onMessage(m) {
 }
 
 function renderTeamControls() {
-  const controls = myTeam === "red"
-    ? `<p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move · Hold <kbd>Shift</kbd> Run</p>
-       <p><span class="mouse-symbol">LMB</span> Fire/use · <span class="mouse-symbol">RMB</span> Hack nearby target</p>
-       <p><kbd>R</kbd> Reload · <kbd>1</kbd>–<kbd>5</kbd> / <span class="mouse-symbol">Wheel</span> Equipment</p>
-       <p><kbd>Space</kbd> Steal ID / dispose corpse · <kbd>Tab</kbd> Radar</p>`
-    : myTeam === "blue"
-      ? `<p><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move · Hold <kbd>Shift</kbd> Run</p>
-         <p><span class="mouse-symbol">LMB</span> Fire/use · <kbd>R</kbd> Reload</p>
-         <p><kbd>1</kbd>–<kbd>5</kbd> / <span class="mouse-symbol">Wheel</span> Equipment</p>
-         <p><kbd>Tab</kbd> Radar / release guard</p>
-         <p>Radar: <span class="mouse-symbol">LMB</span> Interact · <span class="mouse-symbol">RMB</span> Alert</p>`
-      : "<p>Join or watch a match to view controls.</p>";
-  $("teamControlsBody").innerHTML = controls;
+  const source = myTeam === "red" ? $("lobbyRedControls") : myTeam === "blue" ? $("lobbyBlueControls") : null;
+  $("teamControlsBody").innerHTML = source
+    ? source.querySelector(".controls-art").outerHTML
+    : "Join a team to view controls.";
 }
 
 function renderLobby() {
@@ -404,7 +395,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "Escape") {
       finishMinigame(false, "You gave up the challenge.");
     } else if (minigame.purpose === "extraction" &&
-        ["KeyW", "KeyA", "KeyS", "KeyD"].includes(e.code)) {
+        ["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(e.code)) {
       keys[e.code] = true;
     } else if (minigame.purpose === "extraction" && e.key === "Shift") {
       keys.Shift = true;
@@ -412,7 +403,7 @@ addEventListener("keydown", (e) => {
     e.preventDefault();
     return;
   }
-  if (snap && ["Tab", "Space"].includes(e.code)) {
+  if (snap && ["Tab", "Space", "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"].includes(e.code)) {
     e.preventDefault();
   }
   if (e.repeat) {
@@ -432,7 +423,7 @@ addEventListener("keydown", (e) => {
   }
   const canControlCharacter = myTeam === "red" ? snap.me.alive : snap.me.possessed;
   const weaponKeys = { Digit1: "pistol", Digit2: "smg", Digit3: "grenade", Digit4: "pad", Digit5: "knife" };
-  if (canControlCharacter && !isRadar() && e.code === "KeyR") {
+  if (canControlCharacter && !isRadar() && e.code === "Space" && !spaceCorpseAction) {
     act("reload");
     return;
   }
@@ -521,8 +512,12 @@ cv.addEventListener("mousedown", (e) => {
     const point = toWorld(e.clientX, e.clientY);
     if (myTeam === "red") {
       if (snap.me.alive) hackClick(point);
-    } else if (myTeam === "blue" && isRadar() && radarView) {
-      act("alert", { x: point.x, y: point.y });
+    } else if (myTeam === "blue") {
+      if (isRadar() && radarView) radarClick(point, true);
+      else if (!isRadar() && snap.me.guard) {
+        const target = blueShooterCounterTarget(point);
+        if (target) act(target.kind, { id: target.id });
+      }
     }
     return;
   }
@@ -625,8 +620,8 @@ setInterval(() => {
     const self = myTeam === "red" || myTeam === "spectator" ? snap.me : snap.me.guard;
     send({
       t: "input",
-      mx: moving ? (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) : 0,
-      my: moving ? (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0) : 0,
+      mx: moving ? ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0) : 0,
+      my: moving ? ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.KeyW || keys.ArrowUp) ? 1 : 0) : 0,
       ax: self ? self.x + Math.cos(lastAim) * 100 : 0,
       ay: self ? self.y + Math.sin(lastAim) * 100 : 0,
       fire: false, use: false, dispose: false,
@@ -646,8 +641,8 @@ setInterval(() => {
   } // don't turn the character while on the radar
   send({
     t: "input",
-    mx: (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0),
-    my: (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0),
+    mx: ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0),
+    my: ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.KeyW || keys.ArrowUp) ? 1 : 0),
     ax,
     ay,
     fire: mouse.down && canShoot,
@@ -703,7 +698,33 @@ function hackClick(w) {
   return false;
 }
 
-function radarClick(w) {
+function blueShooterCounterTarget(w) {
+  let best = null;
+  let distance = 70;
+  const consider = (kind, id, x, y, radius = 55) => {
+    const candidate = Math.hypot(w.x - x, w.y - y);
+    if (candidate <= radius && candidate < distance) {
+      best = { kind, id };
+      distance = candidate;
+    }
+  };
+  snap.servers.forEach((server, i) => {
+    if (server.ex) consider("counter", server.id, map.servers[i].x, map.servers[i].y, 70);
+  });
+  map.doors.forEach((door, i) => {
+    if (snap.doors[i].h) consider("door", door.id, door.x + door.w / 2, door.y + door.h / 2,
+      Math.max(door.w, door.h) / 2 + 30);
+  });
+  map.lasers.forEach((laser, i) => {
+    if (snap.lasers[i].h) consider("laser", laser.id, laser.x + laser.w / 2, laser.y + laser.h / 2, 90);
+  });
+  map.cameras.forEach((camera, i) => {
+    if (snap.cams[i].h) consider("camera", camera.id, camera.x, camera.y, 55);
+  });
+  return best;
+}
+
+function radarClick(w, counterOnly = false) {
   if (myTeam === "blue" && bluePlacement === "emp") {
     act("emp", { x: w.x, y: w.y });
     bluePlacement = null;
@@ -732,7 +753,13 @@ function radarClick(w) {
     }
   });
   if (best) {
-    act(best.kind, { id: best.id });
+    if (!counterOnly || best.kind === "counter" || best.kind === "door" || best.kind === "laser" || best.kind === "camera") {
+      act(best.kind, { id: best.id });
+      return true;
+    }
+  }
+  if (!counterOnly) {
+    act("alert", { x: w.x, y: w.y });
     return true;
   }
   return false;
@@ -1825,7 +1852,7 @@ function updateHud() {
       hint =
         "RADAR (Tab/Esc to close). Click a nearby server to extract or a device to hack. Scroll to zoom, left-drag to pan";
     } else if (!hint) {
-      hint = "Right-click: hack nearby device/server | 1–5 or wheel: select weapon/knife | Tab: radar";
+      hint = "Right-click: hack nearby device/server | Space: reload/context action | 1–5 or wheel: select | Tab: radar";
     }
     if (!me.alive) {
       hint = respawnStarting
@@ -1848,14 +1875,12 @@ function updateHud() {
     if (me.guard && me.guard.hasPad) {
       teleport = hudStat("Pad", me.guard.padSet ? "Click: teleport" : "Click: place", "ready");
     }
-    const security = charges + hudStat("Possession", possession,
-      me.possessCd && !me.possessed ? "warning" : "ready") + abilities + teleport;
-    panels = `<div class="hud-row">${hudPanel("Blue security", security, "hud-team-blue")}</div>`;
+    panels = "";
     hint = isRadar()
       ? (bluePlacement === "emp"
         ? "EMP armed: click a point on the radar to place it (EMP button cancels)"
         : "Radar: right-click anywhere to alert guards | left-click objects/guards to interact | scroll zoom, drag pan")
-      : "Guard: WASD move, hold Shift to run, left click use, 1–5 or wheel select | Tab releases guard to radar";
+      : "Guard: WASD move, Shift run, Space reload, left click use, 1–5 or wheel select | Tab releases guard";
   }
   const blackoutPanel = myTeam === "red" && snap.dark
     ? `<div class="hud-row">${hudPanel("Status", hudStat("BLACKOUT", snap.dark + "s", "warning"))}</div>`
