@@ -6,14 +6,15 @@
 
 const path = require("path");
 require("dotenv").config({ path: path.join(__dirname, ".env") });
-const fs = require("fs/promises");
 const http = require("http");
 const express = require("express");
 const session = require("express-session");
+const PgSessionStore = require("connect-pg-simple")(session);
 const bcrypt = require("bcrypt");
 const { WebSocketServer } = require("ws");
 const { Lobbies } = require("./game/lobbies");
 const C = require("./game/config");
+const { createDatabase } = require("./game/database");
 
 const PORT = Number(process.env.PORT) || 3100;
 const SESSION_SECRET = process.env.SESSION_SECRET;
@@ -22,8 +23,12 @@ if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
   process.exit(1);
 }
 
-const usersFile = path.join(__dirname, "users.json");
-const users = new Map(); // lowercase username -> { username, passwordHash }
+const DATABASE_URL = process.env.DATABASE_URL;
+if (!DATABASE_URL) {
+  console.error("Set DATABASE_URL to a PostgreSQL connection string.");
+  process.exit(1);
+}
+const database = createDatabase(DATABASE_URL);
 
 const app = express();
 app.set("trust proxy", 1); // hosts like Render terminate HTTPS at a proxy
@@ -31,6 +36,7 @@ app.use(express.json({ limit: "2kb" }));
 const sessionMiddleware = session({
   name: "packetloss.sid",
   secret: SESSION_SECRET,
+  store: new PgSessionStore({ pool: database.pool }),
   proxy: true,
   resave: false,
   saveUninitialized: false,
@@ -73,21 +79,12 @@ app.post("/api/register", async (req, res, next) => {
   if (!validPassword(password)) {
     return res.status(400).json({ error: "Password must be 4-72 bytes long." });
   }
-  const key = username.toLowerCase();
-  if (users.has(key)) {
-    return res.status(409).json({ error: "That username is already registered." });
-  }
   try {
-    const user = { username, passwordHash: await bcrypt.hash(password, 12) };
-    if (users.has(key)) {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const user = await database.createUser(username, passwordHash);
+    if (!user) {
       return res.status(409).json({ error: "That username is already registered." });
     }
-    await fs.writeFile(
-      usersFile,
-      JSON.stringify([...users.values(), user], null, 2),
-      "utf8",
-    );
-    users.set(key, user);
     await regenerateSession(req);
     req.session.username = user.username;
     await saveSession(req);
@@ -103,8 +100,8 @@ app.post("/api/login", async (req, res, next) => {
     return res.status(400).json({ error: "Enter a username and password." });
   }
   try {
-    const user = users.get(username.toLowerCase());
-    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+    const user = await database.findUser(username);
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       return res.status(401).json({ error: "Incorrect username or password." });
     }
     await regenerateSession(req); // new session id on login
@@ -227,16 +224,7 @@ setInterval(() => lobbies.tick(), 1000 / C.tickRate);
 
 // ---------- Start ----------
 async function start() {
-  try {
-    for (const u of JSON.parse(await fs.readFile(usersFile, "utf8"))) {
-      users.set(u.username.toLowerCase(), u);
-    }
-  } catch (e) {
-    if (e.code !== "ENOENT") {
-      throw e;
-    }
-    await fs.writeFile(usersFile, "[]", "utf8");
-  }
+  await database.initialize();
   server.on("error", (e) => {
     console.error(
       e.code === "EADDRINUSE" ? `Port ${PORT} is in use. Change PORT in .env.` : e,
@@ -247,4 +235,7 @@ async function start() {
     console.log(`Packet Loss running at http://localhost:${PORT}`),
   );
 }
-start();
+start().catch((error) => {
+  console.error("Failed to initialize PostgreSQL:", error);
+  process.exit(1);
+});

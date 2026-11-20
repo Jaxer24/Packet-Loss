@@ -24,6 +24,9 @@ button.small { padding: 3px 8px; font-size: 12px; }
 #lobbySelect label { display: block; margin-top: 16px; }
 #lobbySelect .row input { flex: 1; min-width: 0; }
 #lobbyRoom > button { margin: 4px 4px 4px 0; }
+#btnHardMode { position: relative; }
+#btnHardMode::after { content: attr(data-tooltip); position: absolute; z-index: 5; top: calc(100% + 6px); left: 0; width: 220px; padding: 7px 9px; color: #fff; background: rgba(8, 15, 23, .96); border: 1px solid #6ff2a8; border-radius: 5px; font-size: 12px; line-height: 1.35; text-align: left; pointer-events: none; opacity: 0; transition: opacity .12s ease; }
+#btnHardMode:hover::after, #btnHardMode:focus-visible::after { opacity: 1; }
 #roomControls, #teamControls { margin-top: 10px; padding-top: 10px; border-top: 1px solid #42546b; display: grid; gap: 7px; color: #d7e0ea; font-size: 12px; }
 #teamControlsBody { display: grid; gap: 6px; line-height: 1.5; }
 .controls-art { display: block; width: 100%; max-height: 680px; object-fit: contain; }

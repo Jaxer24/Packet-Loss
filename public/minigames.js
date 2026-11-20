@@ -4,6 +4,8 @@ const MAZE_TRAIL_DELAY_SECONDS = 1;
 const MAZE_TRAIL_SPEED = 90;
 const GATE_SPEED = 175;
 const METEOR_SPEED_MULTIPLIER = 1.25;
+const CHASING_GHOST_SPEED = 70;
+const FINISH_MINIGAMES = new Set(["maze", "pacman", "routing"]);
 
 class MouseMinigame {
   constructor(canvas, type, seconds, finish, onStart = () => {}, entrySeconds = null, difficulty = 0) {
@@ -19,6 +21,9 @@ class MouseMinigame {
     this.playStarted = null;
     this.pointer = null;
     this.ended = false;
+    this.finishBased = FINISH_MINIGAMES.has(type);
+    this.completedMazes = 0;
+    this.completedRoutes = 0;
     this.mazeIndex = 0;
     this.createMaze({ x: 30, y: 120 });
     this.gaps = Array.from({ length: 4 }, () => 55 + Math.random() * 130);
@@ -32,10 +37,8 @@ class MouseMinigame {
       y: 30 + Math.floor(i / 6) * 80,
       taken: false,
     }));
-    this.routeNodes = Array.from({ length: 6 }, (_, i) => ({
-      x: 45 + (i % 3) * 155,
-      y: 55 + Math.floor(i / 3) * 125,
-    }));
+    this.chasingGhost = { x: 200, y: 200 };
+    this.createRoute();
     this.routeIndex = 0;
     this.onMove = this.onMove.bind(this);
     this.onDown = this.onDown.bind(this);
@@ -55,6 +58,18 @@ class MouseMinigame {
     ];
     this.mazeIndex = 0;
     this.mazeStarted = performance.now();
+  }
+
+  createRoute() {
+    const cells = Array.from({ length: 18 }, (_, i) => i);
+    for (let i = cells.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cells[i], cells[j]] = [cells[j], cells[i]];
+    }
+    this.routeNodes = cells.slice(0, 6).map((cell) => ({
+      x: 40 + (cell % 6) * 64 + (Math.random() * 20 - 10),
+      y: 40 + Math.floor(cell / 6) * 80 + (Math.random() * 20 - 10),
+    }));
   }
 
   eventPosition(event) {
@@ -108,7 +123,10 @@ class MouseMinigame {
         }
       }
       this.pointer = next;
-      if (this.mazeIndex === this.maze.length - 1) this.createMaze(next);
+      if (this.mazeIndex === this.maze.length - 1) {
+        if (++this.completedMazes === 2) return this.end(true);
+        this.createMaze(next);
+      }
     } else {
       this.pointer = next;
       if (this.type === "routing") {
@@ -116,8 +134,9 @@ class MouseMinigame {
         if (target && Math.hypot(next.x - target.x, next.y - target.y) < 20) {
           this.routeIndex++;
           if (this.routeIndex >= this.routeNodes.length) {
+            if (++this.completedRoutes === 2) return this.end(true);
             this.routeIndex = 0;
-            this.routeNodes.reverse();
+            this.createRoute();
           }
         }
       }
@@ -127,6 +146,7 @@ class MouseMinigame {
   beginPlaying() {
     if (this.playStarted !== null) return;
     this.playStarted = performance.now();
+    this.ghostUpdatedAt = this.playStarted;
     this.onStart();
   }
 
@@ -192,6 +212,8 @@ class MouseMinigame {
     if (this.ended) return;
     const now = performance.now();
     if (this.playStarted === null && this.remainingSeconds(now) <= 0) return this.end(false, this.timeoutReason());
+    if (this.playStarted !== null && !this.finishBased &&
+        now - this.playStarted >= this.seconds * 1000) return;
     const elapsed = this.playStarted === null ? 0 : (now - this.playStarted) / 1000;
     const ctx = this.ctx;
     ctx.clearRect(0, 0, 400, 240);
@@ -256,20 +278,30 @@ class MouseMinigame {
         }
       }
     } else if (this.type === "pacman") {
+      const ghost = this.chasingGhost;
+      const dx = this.pointer.x - ghost.x, dy = this.pointer.y - ghost.y;
+      const distance = Math.hypot(dx, dy);
+      const step = Math.min(distance, Math.max(0, now - this.ghostUpdatedAt) / 1000 *
+        CHASING_GHOST_SPEED * (1 + this.difficulty * 0.7));
+      if (distance > 0) {
+        ghost.x += dx / distance * step;
+        ghost.y += dy / distance * step;
+      }
+      this.ghostUpdatedAt = now;
       for (const dot of this.dots) {
         if (!dot.taken && this.pointer && Math.hypot(this.pointer.x - dot.x, this.pointer.y - dot.y) < 13) dot.taken = true;
         ctx.fillStyle = dot.taken ? "#263548" : "#ffe98a";
         ctx.beginPath(); ctx.arc(dot.x, dot.y, 4, 0, Math.PI * 2); ctx.fill();
       }
-      if (this.dots.every((dot) => dot.taken)) this.dots.forEach((dot) => { dot.taken = false; });
       for (let i = 0; i < 3; i++) {
         const ghostSpeed = 1 + this.difficulty * 0.7;
-        const x = 200 + Math.sin(elapsed * ghostSpeed * (0.9 + i * 0.18) + i * 2.1) * (155 - i * 20);
-        const y = 120 + Math.cos(elapsed * ghostSpeed * (1.1 + i * 0.22) + i * 1.7) * (80 - i * 12);
+        const x = i === 0 ? ghost.x : 200 + Math.sin(elapsed * ghostSpeed * (0.9 + i * 0.18) + i * 2.1) * (155 - i * 20);
+        const y = i === 0 ? ghost.y : 120 + Math.cos(elapsed * ghostSpeed * (1.1 + i * 0.22) + i * 1.7) * (80 - i * 12);
         ctx.fillStyle = ["#ff5c7a", "#8a7dff", "#5ab0ff"][i];
         ctx.beginPath(); ctx.arc(x, y, 12, Math.PI, 0); ctx.lineTo(x + 12, y + 12); ctx.lineTo(x, y + 7); ctx.lineTo(x - 12, y + 12); ctx.closePath(); ctx.fill();
         if (this.pointer && Math.hypot(this.pointer.x - x, this.pointer.y - y) < 20) return this.end(false, "A ghost caught your cursor.");
       }
+      if (this.dots.every((dot) => dot.taken)) return this.end(true);
     } else if (this.type === "routing") {
       this.routeNodes.forEach((node, index) => {
         ctx.strokeStyle = index === this.routeIndex ? "#ffd34d" : index < this.routeIndex ? "#6ff2a8" : "#5b7394";
@@ -286,7 +318,9 @@ class MouseMinigame {
       if (this.pointer && Math.hypot(this.pointer.x - x, this.pointer.y - y) > radius + 10) return this.end(false, "You lost the moving orbit lock.");
     } else if (this.type === "scanner") {
       const origin = this.scannerOrigin || { x: 200 };
-      const x = 40 + ((origin.x - 40 + elapsed * (70 + this.difficulty * 55)) % 320);
+      const span = this.canvas.width;
+      const offset = (origin.x + elapsed * (70 + this.difficulty * 55)) % (span * 2);
+      const x = offset <= span ? offset : span * 2 - offset;
       const width = 34 - this.difficulty * 10;
       ctx.fillStyle = "rgba(60,220,140,.18)"; ctx.fillRect(x - width, 18, width * 2, 204);
       ctx.strokeStyle = "#6ff2a8"; ctx.lineWidth = 3; ctx.strokeRect(x - width, 18, width * 2, 204);

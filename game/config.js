@@ -23,6 +23,7 @@ module.exports = {
   runSpeedMultiplier: 1.65,
   respawnMaxSeconds: 30,
   serverHackSeconds: 20,
+  serverChallengeSeconds: 5,
   serverChallengeEntrySeconds: 10,
   serverHackRange: 95,
   serverCounterLockoutSeconds: 5,

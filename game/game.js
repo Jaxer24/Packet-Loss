@@ -20,6 +20,9 @@ const KNIFE_RANGE = 52;
 const KNIFE_HALF_ANGLE = 0.9;
 const KNIFE_COOLDOWN_SECONDS = 0.5;
 const KNIFE_EFFECT_SECONDS = 0.25;
+const MINIGAMES = ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"];
+const FINISH_MINIGAMES = new Set(["maze", "pacman", "routing"]);
+const randomMinigame = () => MINIGAMES[Math.floor(Math.random() * MINIGAMES.length)];
 const GUNS = {
   pistol: { capacity: C.pistolAmmo, cd: 0.35, spread: 0, dmg: C.pistolDamage },
   smg: { capacity: C.smgAmmo, cd: 0.09, spread: 0, dmg: C.smgDamage },
@@ -50,7 +53,7 @@ class Game {
     this.result = null;
     this.t = nowSec();
     this.host = null;
-    this.recoilEnabled = true;
+    this.hardMode = false;
   }
 
   // =============== LOBBY ===============
@@ -110,7 +113,7 @@ class Game {
       phase: this.phase,
       result: this.result,
       host: this.hostName(),
-      recoilEnabled: this.recoilEnabled,
+      hardMode: this.hardMode,
       players: [...this.players.values()].map((p) => ({
         name: p.name,
         team: p.team,
@@ -351,6 +354,7 @@ class Game {
       t: "init",
       map: M.clientMap,
       team: p.team,
+      returnTeam: p.returnTeam || null,
       name: p.name,
       matchSeconds: C.matchSeconds,
       cfg: {
@@ -384,9 +388,11 @@ class Game {
     ) {
       p.team = msg.team;
       this.broadcastLobby();
-    } else if (msg.t === "recoil_enabled" && this.phase === "lobby" && name === this.hostName() &&
+    } else if (msg.t === "spectator_mode" && this.phase === "playing" && typeof msg.enabled === "boolean") {
+      this.setSpectatorMode(p, msg.enabled);
+    } else if (msg.t === "hard_mode" && this.phase === "lobby" && name === this.hostName() &&
         typeof msg.enabled === "boolean") {
-      this.recoilEnabled = msg.enabled;
+      this.hardMode = msg.enabled;
       this.broadcastLobby();
     } else if (msg.t === "start" && this.phase === "lobby" && name === this.hostName()) {
       const n = [...this.players.values()].filter(
@@ -420,8 +426,59 @@ class Game {
     for (const [name, p] of [...this.players]) {
       if (!p.connected || p.bot) {
         this.players.delete(name);
+      } else if (p.team === "spectator" && p.returnTeam) {
+        p.team = p.returnTeam;
+        p.returnTeam = null;
       }
     }
+    this.broadcastLobby();
+  }
+
+  setSpectatorMode(p, enabled) {
+    if (enabled && (p.team === "red" || p.team === "blue")) {
+      const previousTeam = p.team;
+      const guard = p.possessed && this.guards.find((g) => g.id === p.possessed);
+      const x = guard ? guard.x : previousTeam === "red" ? p.x : M.WORLD.w / 2;
+      const y = guard ? guard.y : previousTeam === "red" ? p.y : M.WORLD.h / 2;
+      this.stopServerExtraction(p, "Extraction stopped because you entered spectator mode.");
+      if (p.respawnGame) {
+        this.send(p.name, { t: "minigame_cancel", id: p.respawnGame.id, text: "Reboot cancelled." });
+        p.respawnGame = null;
+      }
+      if (p.counter) {
+        this.send(p.name, { t: "minigame_cancel", id: p.counter.id, text: "Counterhack abandoned." });
+        p.counter = null;
+      }
+      if (p.possessed) this.releaseGuard(p);
+      for (const player of this.players.values()) {
+        if (player.redLastSeen) player.redLastSeen.delete(p.name);
+      }
+      p.returnTeam = previousTeam;
+      p.team = "spectator";
+      p.x = x;
+      p.y = y;
+    } else if (!enabled && p.team === "spectator" && (p.returnTeam === "red" || p.returnTeam === "blue")) {
+      p.team = p.returnTeam;
+      p.returnTeam = null;
+      if (p.team === "red") {
+        this.initRed(p, Math.floor(Math.random() * M.redSpawns.length));
+      } else {
+        p.view = "radar";
+        p.possessed = null;
+        p.redLastSeen = null;
+      }
+    } else {
+      return;
+    }
+    p.input = { mx: 0, my: 0, ax: 0, ay: 0, fire: false, use: false, dispose: false, run: false };
+    p.vx = 0;
+    p.vy = 0;
+    this.send(p.name, {
+      t: "role_changed",
+      team: p.team,
+      returnTeam: p.returnTeam || null,
+      snapshot: this.snapshot(p),
+    });
     this.broadcastLobby();
   }
 
@@ -439,13 +496,13 @@ class Game {
           return;
         }
         const seconds = Math.min(C.counterhackSeconds, remaining);
-        p.respawnGame = { id: rid(), startedAt: t, readyAt: null, seconds };
+        p.respawnGame = { id: rid(), startedAt: t, readyAt: null, seconds, game: randomMinigame() };
         this.send(p.name, {
           t: "minigame",
           purpose: "respawn",
           request: m.request,
           id: p.respawnGame.id,
-          game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
+          game: p.respawnGame.game,
           seconds,
           entrySeconds: Math.min(C.minigameEntrySeconds, remaining),
           difficulty: this.minigameDifficulty(),
@@ -463,10 +520,12 @@ class Game {
       if (m.a === "respawn_result" && !p.alive && p.respawnGame && m.id === p.respawnGame.id) {
         const elapsed = p.respawnGame.readyAt === null ? -1 : t - p.respawnGame.readyAt;
         const seconds = p.respawnGame.seconds;
-        if (m.ok === true && elapsed < seconds) return;
+        const finished = elapsed >= 0 &&
+          (FINISH_MINIGAMES.has(p.respawnGame.game) || elapsed >= seconds);
+        if (m.ok === true && !finished) return;
         const spawn = p.respawnGame.spawn;
         p.respawnGame = null;
-        if (m.ok === true && elapsed >= seconds && t - p.deadAt < C.respawnMaxSeconds) {
+        if (m.ok === true && finished && t - p.deadAt < C.respawnMaxSeconds) {
           this.initRed(p, spawn);
           this.send(p.name, { t: "minigame_cancel", id: m.id, text: "Reboot complete." });
         } else {
@@ -500,6 +559,7 @@ class Game {
           m.id === p.extraction.challengeId && p.extraction.readyAt === null &&
           t - p.extraction.startedAt < C.serverChallengeEntrySeconds) {
         p.extraction.readyAt = t;
+        this.alertGuards(p.x, p.y, Infinity, C.guardInvestigationSeconds, this.manualAlertSequence);
       } else if (m.a === "server_result") {
         this.finishServerChallenge(p, m);
       }
@@ -509,6 +569,7 @@ class Game {
   }
 
   minigameDifficulty(serverId = null) {
+    if (!this.hardMode) return 0;
     const progress = this.servers.reduce((sum, server) =>
       sum + (server.done ? 1 : server.id === serverId ? server.progress / C.serverHackSeconds : 0), 0);
     const elapsed = Math.max(0, Math.min(1, (this.t - this.startedAt) / C.matchSeconds));
@@ -627,15 +688,17 @@ class Game {
       this.toPlayer(p, "Hacking exposed your disguise!");
     }
     this.makeNoise(server.x, server.y);
-    for (const guard of this.guards) {
-      if (!guard.alive || guard.possessedBy) continue;
-      guard.state = "investigate";
-      guard.until = this.t + C.guardInvestigationSeconds;
-      guard.target = { x: p.x, y: p.y };
-      guard.extractionTarget = p.name;
-      guard.seenPlayer = null;
-      guard.lastSeen = this.t;
-      guard.path = [];
+    if (this.hardMode) {
+      for (const guard of this.guards) {
+        if (!guard.alive || guard.possessedBy) continue;
+        guard.state = "investigate";
+        guard.until = this.t + C.guardInvestigationSeconds;
+        guard.target = { x: p.x, y: p.y };
+        guard.extractionTarget = p.name;
+        guard.seenPlayer = null;
+        guard.lastSeen = this.t;
+        guard.path = [];
+      }
     }
     server.extractor = p.name;
     server.extractionId = rid();
@@ -651,17 +714,18 @@ class Game {
   }
 
   startServerChallenge(p) {
-    p.extraction.challengeId = rid();
+    p.extraction.challengeSequence = (p.extraction.challengeSequence || 0) + 1;
+    p.extraction.challengeId = rid() + "-" + p.extraction.challengeSequence;
     p.extraction.startedAt = this.t;
     p.extraction.readyAt = null;
+    p.extraction.game = randomMinigame();
     this.send(p.name, {
       t: "minigame",
       purpose: "extraction",
       id: p.extraction.challengeId,
       server: p.extraction.server,
-      game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
-      seconds: Math.max(0, C.serverHackSeconds -
-        this.servers.find((server) => server.id === p.extraction.server).progress),
+      game: p.extraction.game,
+      seconds: C.serverChallengeSeconds,
       entrySeconds: C.serverChallengeEntrySeconds,
       difficulty: this.minigameDifficulty(p.extraction.server),
     });
@@ -708,6 +772,20 @@ class Game {
     if (!server || server.extractionId !== attempt.sessionId || !p.connected || message.ok !== true) {
       return this.stopServerExtraction(p, "Extraction stopped. Return to the server to try again.");
     }
+    if (FINISH_MINIGAMES.has(attempt.game) && attempt.readyAt !== null) {
+      if (!p.alive || !this.insideServerRoom(p)) {
+        return this.stopServerExtraction(p, "Extraction cancelled: move back inside the server room.");
+      }
+      this.startServerChallenge(p);
+    }
+  }
+
+  completeServerExtraction(player, server) {
+    server.progress = C.serverHackSeconds;
+    server.done = true;
+    this.stopServerExtraction(player);
+    this.toAll("SERVER " + server.id + " EXTRACTED (" +
+      this.servers.filter((item) => item.done).length + "/3)");
   }
 
   remoteHack(p, id) {
@@ -946,12 +1024,12 @@ class Game {
       s.counterUsed = true; // one attempt per extraction session
       s.counterBy = p.name;
       s.counterCooldownUntil = t + C.serverCounterCooldownSeconds;
-      p.counter = { server: s.id, sessionId: s.extractionId, startedAt: t, readyAt: null, id: rid() };
+      p.counter = { server: s.id, sessionId: s.extractionId, startedAt: t, readyAt: null, id: rid(), game: randomMinigame() };
       this.send(p.name, {
         t: "minigame",
         purpose: "counterhack",
         id: p.counter.id,
-        game: ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"][Math.floor(Math.random() * 7)],
+        game: p.counter.game,
         seconds: C.counterhackSeconds,
         entrySeconds: C.minigameEntrySeconds,
         difficulty: this.minigameDifficulty(s.id),
@@ -962,7 +1040,9 @@ class Game {
     } else if (m.a === "cm_result" && p.counter && m.id === p.counter.id) {
       const attempt = p.counter;
       const elapsed = attempt.readyAt === null ? -1 : t - attempt.readyAt;
-      if (m.ok === true && elapsed < C.counterhackSeconds) return;
+      const finished = elapsed >= 0 &&
+        (FINISH_MINIGAMES.has(attempt.game) || elapsed >= C.counterhackSeconds);
+      if (m.ok === true && !finished) return;
       p.counter = null;
       if (m.ok === true) {
         this.send(p.name, { t: "minigame_cancel", id: attempt.id });
@@ -970,7 +1050,7 @@ class Game {
       const s = this.servers.find((x) => x.id === attempt.server);
       if (
         m.ok === true &&
-        elapsed >= C.counterhackSeconds &&
+        finished &&
         s && !s.done &&
         s.extractor && s.extractionId === attempt.sessionId
       ) {
@@ -1237,7 +1317,7 @@ class Game {
       e.guns[e.cur]--;
       if (e.guns[e.cur] === 0) this.startReload(e, e.kind === "red" ? e : this.players.get(e.possessedBy));
       e.nextShot = t + spec.cd;
-      this.spawnBullet(e, a + (this.recoilEnabled ? this.weaponRecoil(e, e.cur, t) : 0), spec.dmg);
+      this.spawnBullet(e, a + (this.hardMode ? this.weaponRecoil(e, e.cur, t) : 0), spec.dmg);
       if (isRed) {
         this.makeNoise(e.x, e.y);
         this.breakDisguiseIfSeen(e);
@@ -1419,8 +1499,9 @@ class Game {
         this.tickBlue(p, t);
       } else if (p.team === "spectator" && p.connected && p.input) {
         const length = Math.hypot(p.input.mx, p.input.my) || 1;
-        p.x = Math.max(0, Math.min(M.WORLD.w, p.x + p.input.mx / length * C.redSpeed * dt));
-        p.y = Math.max(0, Math.min(M.WORLD.h, p.y + p.input.my / length * C.redSpeed * dt));
+        const speed = C.redSpeed * (p.input.run ? C.runSpeedMultiplier : 1);
+        p.x = Math.max(0, Math.min(M.WORLD.w, p.x + p.input.mx / length * speed * dt));
+        p.y = Math.max(0, Math.min(M.WORLD.h, p.y + p.input.my / length * speed * dt));
       }
     }
     this.tickServers(dt, t);
@@ -1482,6 +1563,7 @@ class Game {
     this.finishReload(p);
     if (!p.alive) {
       if (p.respawnGame && p.respawnGame.readyAt !== null &&
+          !FINISH_MINIGAMES.has(p.respawnGame.game) &&
           t - p.respawnGame.readyAt >= p.respawnGame.seconds &&
           t - p.deadAt < C.respawnMaxSeconds) {
         this.act(p, { a: "respawn_result", id: p.respawnGame.id, ok: true });
@@ -1527,6 +1609,7 @@ class Game {
 
   tickBlue(p, t) {
     if (p.counter && p.counter.readyAt !== null &&
+        !FINISH_MINIGAMES.has(p.counter.game) &&
         t - p.counter.readyAt >= C.counterhackSeconds) {
       this.blueAct(p, { a: "cm_result", id: p.counter.id, ok: true });
     } else if (p.counter && p.counter.readyAt === null &&
@@ -1588,13 +1671,14 @@ class Game {
         continue;
       }
       if (player.extraction.readyAt !== null) {
-        const activeTime = Math.min(dt, Math.max(0, t - player.extraction.readyAt));
+        const timed = !player.bot && !FINISH_MINIGAMES.has(attempt.game);
+        const activeEnd = timed ? Math.min(t, attempt.readyAt + C.serverChallengeSeconds) : t;
+        const activeTime = Math.max(0, activeEnd - Math.max(t - dt, attempt.readyAt));
         s.progress = Math.min(C.serverHackSeconds, s.progress + activeTime);
         if (s.progress >= C.serverHackSeconds) {
-          s.done = true;
-          this.stopServerExtraction(player);
-          this.toAll("SERVER " + s.id + " EXTRACTED (" +
-            this.servers.filter((item) => item.done).length + "/3)");
+          this.completeServerExtraction(player, s);
+        } else if (timed && t - attempt.readyAt >= C.serverChallengeSeconds) {
+          this.startServerChallenge(player);
         }
       }
     }
@@ -1786,7 +1870,7 @@ class Game {
     }
 
     const activeExtractor = (player) =>
-      player && player.connected && player.alive && player.extraction;
+      this.hardMode && player && player.connected && player.alive && player.extraction;
     let extractor = activeExtractor(this.players.get(g.extractionTarget))
       ? this.players.get(g.extractionTarget) : null;
     if (!extractor) {
@@ -2109,7 +2193,14 @@ class Game {
 
     if (p.team === "spectator") {
       Object.assign(snap, this.worldView(p, true, null));
-      snap.me = { x: r(p.x), y: r(p.y) };
+      const moving = p.input && Math.hypot(p.input.mx, p.input.my) > 0;
+      snap.me = {
+        x: r(p.x),
+        y: r(p.y),
+        d: moving && p.input.run ? 1 : 0,
+        dx: r(p.x - (p.input ? p.input.mx : 0) * 42),
+        dy: r(p.y - (p.input ? p.input.my : 0) * 42),
+      };
     } else if (p.team === "red") {
       Object.assign(snap, this.worldView(p, false, p.name));
       // Hacked guard GPS: Red always knows where every living guard is, even through walls and fog

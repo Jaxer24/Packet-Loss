@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Packet Loss</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="style.css?v=control-overhaul-11">
+  <link rel="stylesheet" href="style.css?v=lobby-tooltip-12">
 </head>
 <body>
   <audio id="backgroundMusic" src="EXITUS%20-%20Dark%20Techno%20Industrial%20-%20Copyright%20Free%20Music.mp3" loop preload="none"></audio>
@@ -22,6 +22,7 @@
       <div id="roomControls">
         <div class="hud-heading">Lobby</div>
         <div>Code: <strong id="gameLobbyCode"></strong></div>
+        <button id="btnSpectator" class="alt small hidden" type="button">Spectator mode</button>
         <button id="btnLeaveGame" class="alt small">Leave lobby</button>
       </div>
     </div>
@@ -58,6 +59,8 @@
       <p>Lobby code: <strong id="lobbyCode"></strong></p>
       <p id="lobbyPrivacy"></p>
       <button id="btnPrivacy" class="alt small hidden"></button>
+      <button id="btnHardMode" class="alt small hidden" aria-describedby="hardModeHelp" data-tooltip="Hard mode enables recoil, aggressive guards during extraction, and harder minigames over time.">Hard mode: OFF</button>
+      <span id="hardModeHelp" class="hidden">Hard mode enables recoil, aggressive guards during extraction, and harder minigames over time.</span>
       <details class="lobby-guide">
         <summary>Team Goals &amp; Controls</summary>
         <div class="lobby-team-guides">
@@ -79,7 +82,6 @@
       </div>
       <p id="spectatorList" class="sub"></p>
       <p id="lobbyMsg" class="sub"></p>
-      <button id="btnRecoil" class="alt small hidden">Recoil: ON</button>
       <button id="btnStart" class="hidden">Start match (host)</button>
       <button id="btnLeaveLobby" class="alt">Leave lobby</button>
       </div>
@@ -123,8 +125,8 @@
     </div>
   </section>
 
-  <script src="minigames.js?v=faster-challenges-22"></script>
+  <script src="minigames.js?v=ghost-chase-26"></script>
   <script src="wall-destruction.js?v=1"></script>
-  <script src="client.js?v=controls-diagram-63"></script>
+  <script src="client.js?v=ghost-chase-70"></script>
 </body>
 </html>

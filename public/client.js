@@ -19,6 +19,7 @@ $("musicVolumeValue").textContent = musicVolume.value + "%";
 let ws = null;
 let myName = "";
 let myTeam = "";
+let returnTeam = null;
 let map = null;
 let cfg = null;
 let snap = null;
@@ -186,7 +187,7 @@ $("btnLogout").onclick = async () => {
 $("joinRed").onclick = () => send({ t: "team", team: "red" });
 $("joinBlue").onclick = () => send({ t: "team", team: "blue" });
 $("btnStart").onclick = () => send({ t: "start" });
-$("btnRecoil").onclick = () => send({ t: "recoil_enabled", enabled: !lobby.recoilEnabled });
+$("btnHardMode").onclick = () => send({ t: "hard_mode", enabled: !lobby.hardMode });
 $("btnBack").onclick = () => send({ t: "lobby" });
 $("btnHost").onclick = () => send({ t: "host_lobby" });
 $("btnRandom").onclick = () => send({ t: "join_random" });
@@ -197,6 +198,7 @@ $("lobbyCodeInput").addEventListener("keydown", (event) => {
 $("btnPrivacy").onclick = () => send({ t: "lobby_privacy", private: !lobby.private });
 $("btnLeaveLobby").onclick = () => send({ t: "leave_lobby" });
 $("btnLeaveGame").onclick = () => send({ t: "leave_lobby" });
+$("btnSpectator").onclick = () => send({ t: "spectator_mode", enabled: myTeam !== "spectator" });
 $("btnLeaveEnd").onclick = () => send({ t: "leave_lobby" });
 
 function connect() {
@@ -222,6 +224,9 @@ function onMessage(m) {
   if (m.t === "lobby_select") {
     lobby = null;
     snap = null;
+    myTeam = "";
+    returnTeam = null;
+    renderSpectatorButton();
     mouse.down = false;
     for (const key in keys) keys[key] = false;
     closeMinigame();
@@ -235,6 +240,7 @@ function onMessage(m) {
     if (lobby) toast(m.text);
   } else if (m.t === "lobby") {
     lobby = m;
+    renderSpectatorButton();
     $("gameLobbyCode").textContent = m.code || "";
     $("lobbySelect").classList.add("hidden");
     $("lobbyRoom").classList.remove("hidden");
@@ -271,23 +277,19 @@ function onMessage(m) {
     map = m.map;
     cfg = m.cfg;
     myTeam = m.team;
+    returnTeam = m.returnTeam;
+    renderSpectatorButton();
     myName = m.name;
     renderTeamControls();
-    bluePlacement = null;
-    shooterLook = { x: 0, y: 0 };
-    equipmentWheelUntil = 0;
-    equipmentWheelSelection = null;
-    mouse.down = false;
-    for (const key in keys) keys[key] = false;
-    redRadar = false;
-    radarView = null;
-    panDrag = null;
-    lastBluePosition = null;
-    disposalLine = null;
-    closeMinigame();
-    respawnStarting = false;
-    respawnSpawn = null;
-      show("game");
+    resetMatchControls();
+    show("game");
+  } else if (m.t === "role_changed") {
+    myTeam = m.team;
+    returnTeam = m.returnTeam;
+    snap = m.snapshot;
+    renderTeamControls();
+    renderSpectatorButton();
+    resetMatchControls();
   } else if (m.t === "snap") {
     const wasRadar = isRadar();
     const wasAlive = snap && myTeam === "red" ? snap.me.alive : null;
@@ -335,6 +337,33 @@ function onMessage(m) {
   }
 }
 
+function resetMatchControls() {
+  bluePlacement = null;
+  shooterLook = { x: 0, y: 0 };
+  equipmentWheelUntil = 0;
+  equipmentWheelSelection = null;
+  mouse.down = false;
+  for (const key in keys) keys[key] = false;
+  redRadar = false;
+  radarView = null;
+  panDrag = null;
+  lastBluePosition = null;
+  disposalLine = null;
+  spaceCorpseAction = null;
+  closeMinigame();
+  respawnStarting = false;
+  respawnSpawn = null;
+}
+
+function renderSpectatorButton() {
+  const canSwitch = lobby && lobby.phase === "playing" &&
+    (myTeam === "red" || myTeam === "blue" || (myTeam === "spectator" && returnTeam));
+  $("btnSpectator").classList.toggle("hidden", !canSwitch);
+  $("btnSpectator").textContent = myTeam === "spectator"
+    ? "Return to " + (returnTeam === "red" ? "Red" : "Blue") + " team"
+    : "Spectator mode";
+}
+
 function renderTeamControls() {
   const source = myTeam === "red" ? $("lobbyRedControls") : myTeam === "blue" ? $("lobbyBlueControls") : null;
   $("teamControlsBody").innerHTML = source
@@ -368,10 +397,10 @@ function renderLobby() {
   }
   const iAmHost = lobby.host === myName;
   $("btnPrivacy").classList.toggle("hidden", !iAmHost);
-  $("btnPrivacy").textContent = lobby.private ? "Make open to random joining" : "Make private (code only)";
+  $("btnPrivacy").textContent = lobby.private ? "OPEN game" : "PRIVATE game";
   $("btnStart").classList.toggle("hidden", !iAmHost);
-  $("btnRecoil").classList.toggle("hidden", !iAmHost);
-  $("btnRecoil").textContent = `Recoil: ${lobby.recoilEnabled === false ? "OFF" : "ON"}`;
+  $("btnHardMode").classList.toggle("hidden", !iAmHost);
+  $("btnHardMode").textContent = `Hard mode: ${lobby.hardMode ? "ON" : "OFF"}`;
   $("lobbyMsg").textContent = iAmHost
     ? "You are the host. Start whenever teams look right (solo is allowed)."
     : "Waiting for the host to start...";
@@ -819,10 +848,10 @@ function startMinigame(message) {
   mouse.down = false;
   const instructions = {
     flappy: "Fly through the blue gates.",
-    maze: "Avoid the advancing lava trail.",
+    maze: "Complete 2 mazes while avoiding the advancing lava trail.",
     meteors: "Avoid the falling meteors.",
-    pacman: "Collect dots and avoid the moving ghosts.",
-    routing: "Sweep through the numbered nodes in order.",
+    pacman: "Collect all yellow dots and avoid the ghosts. The red ghost follows your cursor.",
+    routing: "Complete 2 screens by sweeping through the numbered nodes in order.",
     orbit: "Keep the cursor inside the moving blue orbit ring.",
     scanner: "Stay inside the moving green scanner zone.",
   };
@@ -1831,8 +1860,8 @@ function updateHud() {
   if (myTeam === "spectator") {
     panels = `<div class="hud-row">${hudPanel("Spectator", hudStat("Mode", "WATCHING"))}</div>`;
     hint = isRadar()
-      ? "Spectator map: Tab closes | scroll zoom, drag pan | WASD move"
-      : "Spectator: WASD move through walls | Tab opens map";
+      ? "Spectator map: Tab closes | scroll zoom, drag pan | WASD move, Shift run"
+      : "Spectator: WASD move through walls, Shift run | Tab opens map";
   } else if (myTeam === "red") {
     panels = "";
     const sv = map.servers.find(
@@ -1900,7 +1929,7 @@ function frame() {
   if (minigame) {
     const remaining = minigame.game.remainingSeconds();
     $("cmTimer").classList.toggle("hidden",
-      minigame.purpose === "extraction" && minigame.game.playStarted !== null);
+      minigame.game.finishBased && minigame.game.playStarted !== null);
     $("cmTime").textContent = Math.ceil(remaining);
     $("cmTimeLabel").textContent = minigame.game.playStarted === null
       ? "Click to start within"
@@ -1909,7 +1938,7 @@ function frame() {
       const server = snap.servers.find((item) => item.id === minigame.server);
       if (server) {
         $("minigameProgress").textContent = "Extraction: " + Math.floor(server.p * 100) +
-          "% - reaches 100% while you play";
+          "% - progresses only while playing";
       }
     }
     if (remaining <= 0 && minigame.game.playStarted === null) {
