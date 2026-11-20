@@ -75,6 +75,12 @@ $("settingsToggle").onclick = () => {
   const open = $("settingsPanel").classList.toggle("hidden") === false;
   $("settingsToggle").setAttribute("aria-expanded", String(open));
 };
+document.addEventListener("click", (event) => {
+  if (!$("settingsPanel").contains(event.target) && !$("settingsToggle").contains(event.target)) {
+    $("settingsPanel").classList.add("hidden");
+    $("settingsToggle").setAttribute("aria-expanded", "false");
+  }
+});
 function applyMusicVolume() {
   const value = Number(musicVolume.value);
   music.volume = value / 100;
