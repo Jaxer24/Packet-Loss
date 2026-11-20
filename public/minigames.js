@@ -175,7 +175,10 @@ class MouseMinigame {
   }
 
   mazeTrail(now) {
-    let remaining = Math.max(0,     (now - this.mazeStarted) / 1000 - (MAZE_TRAIL_DELAY_SECONDS * (1 - this.difficulty * 0.6))) * MAZE_TRAIL_SPEED * (1 + this.difficulty);    if (remaining === 0) return [];
+    const delay = MAZE_TRAIL_DELAY_SECONDS * (1 - this.difficulty * 0.6);
+    let remaining = Math.max(0, (now - this.mazeStarted) / 1000 - delay) *
+      MAZE_TRAIL_SPEED * (1 + this.difficulty);
+    if (remaining === 0) return [];
     const trail = [this.maze[0]];
     for (let i = 1; i < this.maze.length; i++) {
       const start = this.maze[i - 1], end = this.maze[i];

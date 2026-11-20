@@ -142,3 +142,5 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
 .minigame-card { width: 460px; max-height: 94vh; overflow: auto; background: #121923; }
 #counter.transparent-minigame .minigame-card { background: rgba(18, 25, 35, 0.4); }
 #minigameCanvas { position: static; display: block; width: 100%; height: auto; aspect-ratio: 5 / 3; border: 1px solid #5ab0ff; cursor: crosshair; touch-action: none; }
+/* Keep the centered minigame card still when an objective game's timer disappears. */
+#cmTimer.timer-invisible { visibility: hidden; }

@@ -56,6 +56,7 @@ const mouse = { x: 0, y: 0, down: false };
 const disp = {}; // smoothed display positions, keyed by entity
 
 // ---------- helpers ----------
+// Switch between the three top-level screens and stop music when returning to login.
 const show = (id) => {
   for (const s of ["auth", "lobby", "game"]) {
     $(s).classList.toggle("hidden", s !== id);
@@ -92,6 +93,7 @@ $("blueEmp").onclick = () => {
   bluePlacement = bluePlacement === "emp" ? null : "emp";
   toast(bluePlacement ? "EMP armed. Click an open point on the radar to place it." : "EMP placement cancelled.");
 };
+// Ignore old play requests if the user pauses or changes screens before the promise settles.
 function playMusic() {
   const request = ++musicRequest;
   $("musicToggle").textContent = "Pause music";
@@ -207,6 +209,7 @@ $("btnLeaveGame").onclick = () => send({ t: "leave_lobby" });
 $("btnSpectator").onclick = () => send({ t: "spectator_mode", enabled: myTeam !== "spectator" });
 $("btnLeaveEnd").onclick = () => send({ t: "leave_lobby" });
 
+// WebSocket carries lobby messages, input, and live snapshots after HTTP login.
 function connect() {
   if (ws) {
     ws.close();
@@ -226,6 +229,7 @@ function connect() {
   if (musicEnabled) playMusic();
 }
 
+// The message type determines which local state and screen need updating.
 function onMessage(m) {
   if (m.t === "lobby_select") {
     lobby = null;
@@ -343,6 +347,7 @@ function onMessage(m) {
   }
 }
 
+// Clear held inputs and temporary views when joining a match or changing roles.
 function resetMatchControls() {
   bluePlacement = null;
   shooterLook = { x: 0, y: 0 };
@@ -424,6 +429,7 @@ fetch("/api/me").then(async (r) => {
 });
 
 // ---------- input ----------
+// Keyboard and mouse events update local controls; the interval below sends them to the server.
 addEventListener("keydown", (e) => {
   if (e.target && $("musicControls").contains(e.target)) return;
   if (minigame) {
@@ -468,18 +474,8 @@ addEventListener("keydown", (e) => {
     act("weapon_select", { weapon: equipmentWheelSelection });
     return;
   }
-  if (myTeam === "red") {
-    if (!snap.me.alive) return;
-    if (e.code === "Tab") {
-      redRadar = !redRadar;
-      radarView = null;
-      panDrag = null;
-    } else if (e.code === "Escape") {
-      redRadar = false;
-      radarView = null;
-      panDrag = null;
-    }
-  } else if (myTeam === "spectator") {
+  if (myTeam === "red" || myTeam === "spectator") {
+    if (myTeam === "red" && !snap.me.alive) return;
     if (e.code === "Tab" || e.code === "Escape") {
       redRadar = e.code === "Tab" ? !redRadar : false;
       radarView = null;
@@ -520,6 +516,7 @@ cv.addEventListener("mousemove", (e) => {
     }
   }
 });
+// A short press on the radar is a click; dragging pans instead of triggering an action.
 addEventListener("mouseup", (e) => {
   if (e.button === 0) {
     mouse.down = false;
@@ -638,14 +635,15 @@ cv.addEventListener(
   { passive: false },
 );
 const toWorld = (sx, sy) => ({ x: (sx - cam.ox) / cam.s, y: (sy - cam.oy) / cam.s });
-// Radar is always available to Blue and toggled with Tab by Red.
+// Blue uses radar unless possessing a guard in shooter view. Red and spectators toggle it.
 const isRadar = () =>
   !!snap &&
   ((myTeam === "blue" && !(snap.me.possessed && snap.me.view === "shooter")) ||
     (myTeam === "red" && (redRadar || !snap.me.alive)) ||
     (myTeam === "spectator" && redRadar));
 
-// Send our input 30 times per second
+// Send input about 30 times per second. During extraction, movement stays available
+// while firing and other actions are disabled; other minigames stop movement too.
 setInterval(() => {
   if (!snap || !map) {
     return;
@@ -687,6 +685,7 @@ setInterval(() => {
   });
 }, 33);
 
+// Pick the closest eligible Red interaction near the clicked world position.
 function hackClick(w) {
   const radar = isRadar();
   if (!radar && snap.me.charges && snap.me.charges.a <= 0) return false;
@@ -733,6 +732,7 @@ function hackClick(w) {
   return false;
 }
 
+// Blue can counter nearby hacked devices or extraction from a possessed guard's view.
 function blueShooterCounterTarget(w) {
   let best = null;
   let distance = 70;
@@ -759,6 +759,7 @@ function blueShooterCounterTarget(w) {
   return best;
 }
 
+// Blue radar clicks choose a nearby target, or send an alert when clicking empty space.
 function radarClick(w, counterOnly = false) {
   if (myTeam === "blue" && bluePlacement === "emp") {
     act("emp", { x: w.x, y: w.y });
@@ -815,6 +816,7 @@ function respawnClick(point) {
   startRespawn(selected);
 }
 
+// Request IDs prevent a late respawn response from starting an outdated challenge.
 function startRespawn(spawn) {
   if (respawnStarting || minigame) return;
   if (!ws || ws.readyState !== 1) {
@@ -834,6 +836,7 @@ function startRespawn(spawn) {
   }, 3000);
 }
 
+// The server chooses a challenge and tracks its session; the browser runs its visuals.
 function startMinigame(message) {
   if (message.purpose === "respawn" &&
       (!respawnStarting || respawnSpawn === null || message.request !== respawnRequest)) {
@@ -854,7 +857,7 @@ function startMinigame(message) {
   mouse.down = false;
   const instructions = {
     flappy: "Fly through the blue gates.",
-    maze: "Complete 2 mazes while avoiding the advancing lava trail.",
+    maze: "Click anywhere to start, then complete 2 mazes while avoiding the advancing lava trail.",
     meteors: "Avoid the falling meteors.",
     pacman: "Collect all yellow dots and avoid the ghosts. The red ghost follows your cursor.",
     routing: "Complete 2 screens by sweeping through the numbered nodes in order.",
@@ -888,7 +891,7 @@ function startMinigame(message) {
     message.difficulty || 0,
   );
   $("minigameProgress").classList.toggle("hidden", message.purpose !== "extraction");
-  $("cmTimer").classList.remove("hidden");
+  $("cmTimer").classList.remove("hidden", "timer-invisible");
   $("counter").classList.toggle("extraction-overlay", message.purpose === "extraction");
   $("counter").classList.toggle("transparent-minigame", message.purpose !== "respawn");
   $("game").classList.toggle("extraction-active", message.purpose === "extraction");
@@ -907,6 +910,7 @@ function closeMinigame() {
   $("counter").classList.add("hidden");
 }
 
+// Report the result with the challenge ID so the server can reject stale results.
 function finishMinigame(ok, reason = "") {
   if (!minigame) return;
   const attempt = minigame;
@@ -932,50 +936,7 @@ function resize() {
 addEventListener("resize", resize);
 resize();
 
-function circle(x, y, r, fill, stroke, lw) {
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, 7);
-  if (fill) {
-    ctx.fillStyle = fill;
-    ctx.fill();
-  }
-  if (stroke) {
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = lw || 2;
-    ctx.stroke();
-  }
-}
-function body(x, y, a, fill, ring) {
-  circle(x, y, cfg.playerRadius, fill, ring, 3);
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(
-    x + Math.cos(a) * cfg.playerRadius * 1.5,
-    y + Math.sin(a) * cfg.playerRadius * 1.5,
-  );
-  ctx.stroke();
-}
-function healthBar(x, y, hp, maximum, armor = 0, reloadProgress = null) {
-  const fraction = Math.max(0, Math.min(1, hp / maximum));
-  ctx.fillStyle = "rgba(0,0,0,.82)";
-  ctx.fillRect(x - 17, y - 31, 34, 5);
-  ctx.fillStyle = "#ff657d";
-  ctx.fillRect(x - 17, y - 31, 34 * fraction, 5);
-  if (reloadProgress !== null) {
-    ctx.fillStyle = "rgba(0,0,0,.82)";
-    ctx.fillRect(x - 17, y - 38, 34, 4);
-    ctx.fillStyle = "#ffd34d";
-    ctx.fillRect(x - 17, y - 38, 34 * Math.max(0, Math.min(1, reloadProgress)), 4);
-  }
-  if (armor > 0) {
-    ctx.fillStyle = "rgba(0,0,0,.82)";
-    ctx.fillRect(x - 17, y - 24, 34, 3);
-    ctx.fillStyle = "#5ab0ff";
-    ctx.fillRect(x - 17, y - 24, 34 * Math.min(1, armor / cfg.maxArmor), 3);
-  }
-}
+const { circle, body, healthBar, text } = Drawing.create(ctx, () => cfg);
 
 function drawGpsDirection(marker) {
   if (!Number.isFinite(marker.a)) return;
@@ -993,13 +954,6 @@ function drawGuardGps(marker) {
   circle(marker.x, marker.y, 55, "rgba(74,163,255,.22)",
     marker.taken ? "rgba(150,150,150,.7)" : "#4aa3ff", 3);
 }
-function text(t, x, y, color, size) {
-  ctx.fillStyle = color || "#fff";
-  ctx.font = (size || 14) + "px Consolas, monospace";
-  ctx.textAlign = "center";
-  ctx.fillText(t, x, y);
-}
-
 function drawEmpFields() {
   for (const emp of snap.emps || []) {
     circle(emp.x, emp.y, emp.radius, "rgba(90,180,255,.18)", "#5ab0ff", 4);
@@ -1018,85 +972,13 @@ mapImg.src = "/facility.png";
 const lockerImg = new Image();
 lockerImg.src = "/Locker.png";
 
-// Clip each ray against the same wall and closed-door rectangles used by server sight.
-function cameraRayDistance(x, y, angle, range, obstacles) {
-  const dx = Math.cos(angle);
-  const dy = Math.sin(angle);
-  let nearest = range;
-  for (const rect of obstacles) {
-    let enter = 0;
-    let exit = nearest;
-    if (Math.abs(dx) < 1e-12) {
-      if (x < rect.x || x > rect.x + rect.w) continue;
-    } else {
-      const first = (rect.x - x) / dx;
-      const second = (rect.x + rect.w - x) / dx;
-      enter = Math.max(enter, Math.min(first, second));
-      exit = Math.min(exit, Math.max(first, second));
-    }
-    if (Math.abs(dy) < 1e-12) {
-      if (y < rect.y || y > rect.y + rect.h) continue;
-    } else {
-      const first = (rect.y - y) / dy;
-      const second = (rect.y + rect.h - y) / dy;
-      enter = Math.max(enter, Math.min(first, second));
-      exit = Math.min(exit, Math.max(first, second));
-    }
-    if (enter <= exit) nearest = enter;
-  }
-  return nearest;
-}
-
-function cameraVisibilityPoints(camera, angle, obstacles) {
-  const range = 380;
-  const halfAngle = 0.6;
-  const nearby = obstacles.filter((rect) =>
-    rect.x <= camera.x + range && rect.x + rect.w >= camera.x - range &&
-    rect.y <= camera.y + range && rect.y + rect.h >= camera.y - range);
-  const angles = [];
-  for (let i = 0; i <= 48; i++) {
-    angles.push(-halfAngle + 2 * halfAngle * i / 48);
-  }
-  for (const rect of nearby) {
-    for (const x of [rect.x, rect.x + rect.w]) {
-      for (const y of [rect.y, rect.y + rect.h]) {
-        const difference = Math.atan2(y - camera.y, x - camera.x) - angle;
-        const offset = Math.atan2(Math.sin(difference), Math.cos(difference));
-        for (const delta of [-0.00001, 0, 0.00001]) {
-          if (offset + delta > -halfAngle && offset + delta < halfAngle) {
-            angles.push(offset + delta);
-          }
-        }
-      }
-    }
-  }
-  angles.sort((a, b) => a - b);
-  return angles.map((offset) => {
-    const rayAngle = angle + offset;
-    const distance = cameraRayDistance(camera.x, camera.y, rayAngle, range, nearby);
-    return { x: camera.x + Math.cos(rayAngle) * distance, y: camera.y + Math.sin(rayAngle) * distance };
-  });
-}
-
-let cameraVisibilityCache = new Map();
-let cameraVisibilityMap = null;
-function cachedCameraVisibility(camera, state, obstacles, doorStates, wallRevision) {
-  if (cameraVisibilityMap !== map) {
-    cameraVisibilityMap = map;
-    cameraVisibilityCache = new Map();
-  }
-  const cached = cameraVisibilityCache.get(state.id);
-  if (cached && cached.angle === state.a && cached.doors === doorStates &&
-      cached.walls === wallRevision) return cached.points;
-  const points = cameraVisibilityPoints(camera, state.a, obstacles);
-  cameraVisibilityCache.set(state.id, { angle: state.a, doors: doorStates, walls: wallRevision, points });
-  return points;
-}
+const getCameraVisibility = CameraVisibility.createCache();
 
 let wallDisplayMap = null;
 let displayWalls = [];
 let removedWallAreas = [];
 let displayedBlasts = 0;
+// Replay only new wall blasts. Reset the display cache when a new map or match arrives.
 function updateDisplayWalls() {
   const blasts = snap.wallBlasts || [];
   if (wallDisplayMap !== map || blasts.length < displayedBlasts) {
@@ -1123,6 +1005,7 @@ function hackableFill(isHacked) {
     ? "rgba(60,220,140,.25)" : "rgba(255,60,60,.25)";
 }
 
+// Draw static map features using either radar artwork or the shooter collision geometry.
 function drawWorld(radar) {
   updateDisplayWalls();
   const W = map.WORLD.w,
@@ -1258,7 +1141,7 @@ function drawWorld(radar) {
       ctx.fillStyle = "rgba(255,211,77,.10)";
       ctx.beginPath();
       ctx.moveTo(m.x, m.y);
-      cachedCameraVisibility(m, c, cameraObstacles, doorStates, displayedBlasts).forEach((point) => {
+      getCameraVisibility(map, m, c, cameraObstacles, doorStates, displayedBlasts).forEach((point) => {
         ctx.lineTo(point.x, point.y);
       });
       ctx.closePath();
@@ -1312,6 +1195,7 @@ function drawDashTracer(entity) {
   ctx.restore();
 }
 
+// Draw only entities included in the server snapshot; visibility is decided server-side.
 function drawEntities(selfGuardId) {
   drawKnifeSwings();
   (snap.corpses || []).forEach((c) => {
@@ -1381,6 +1265,7 @@ function drawKnifeSwings() {
   });
 }
 
+// Draw fog on a separate canvas, then cut out the lit radius or dark-mode vision cone.
 function drawVision(cx, cy, aim, nightVision) {
   const dark = snap.dark > 0 && !nightVision;
   fx.globalCompositeOperation = "source-over";
@@ -1456,6 +1341,7 @@ function drawEquipmentWheel(centerX, centerY) {
   ctx.restore();
 }
 
+// Shooter view follows the controlled character and applies the fog overlay.
 function drawShooter() {
   const me = snap.me,
     cw = cv.width,
@@ -1551,6 +1437,7 @@ function drawShooter() {
   ctx.stroke();
 }
 
+// Radar draws tactical markers and uses its own zoom/pan camera.
 function drawRadar() {
   const cw = cv.width,
     ch = cv.height,
@@ -1841,10 +1728,7 @@ function chargeCells(status, color) {
     }).join("") + "</span>";
 }
 
-function cooldownStat(label, seconds) {
-  return hudStat(label, seconds ? `${seconds}s` : "READY", seconds ? "warning" : "ready");
-}
-
+// Build status panels and contextual instructions from the latest snapshot.
 function updateHud() {
   const me = snap.me;
   updateEquipmentQuick();
@@ -1869,7 +1753,6 @@ function updateHud() {
       ? "Spectator map: Tab closes | scroll zoom, drag pan | WASD move, Shift run"
       : "Spectator: WASD move through walls, Shift run | Tab opens map";
   } else if (myTeam === "red") {
-    panels = "";
     const sv = map.servers.find(
       (s, i) => !snap.servers[i].done && Math.hypot(s.x - me.x, s.y - me.y) < 95,
     );
@@ -1895,22 +1778,6 @@ function updateHud() {
         : "CONNECTION LOST: click a numbered spawn to reboot | scroll zoom, drag pan";
     }
   } else {
-    const charges = "";
-    const blackout = snap.dark
-      ? hudStat("Blackout", `ACTIVE ${snap.dark}s`, "warning")
-      : me.darkCd
-        ? hudStat("Blackout", `COOLDOWN ${me.darkCd}s`, "warning")
-        : hudStat("Blackout", "READY", "ready");
-    const alerts = hudStat("Alerts", `${me.alertCd.a}/${me.alertCd.m}`) +
-      (me.alertCd.n ? hudStat("Next alert", `${me.alertCd.n}s`, "warning") : "");
-    const abilities = alerts + cooldownStat("EMP", me.empCd) + blackout;
-    const possession = me.possessed ? "ACTIVE (Tab opens radar and releases)"
-      : me.possessCd ? `cooldown ${me.possessCd}s` : "READY";
-    let teleport = "";
-    if (me.guard && me.guard.hasPad) {
-      teleport = hudStat("Pad", me.guard.padSet ? "Click: teleport" : "Click: place", "ready");
-    }
-    panels = "";
     hint = isRadar()
       ? (bluePlacement === "emp"
         ? "EMP armed: click a point on the radar to place it (EMP button cancels)"
@@ -1927,6 +1794,7 @@ function updateHud() {
   $("hint").textContent = hint;
 }
 
+// The animation loop renders the most recent snapshot; networking runs independently.
 function frame() {
   requestAnimationFrame(frame);
   if (!snap || !map || $("game").classList.contains("hidden")) {
@@ -1934,7 +1802,7 @@ function frame() {
   }
   if (minigame) {
     const remaining = minigame.game.remainingSeconds();
-    $("cmTimer").classList.toggle("hidden",
+    $("cmTimer").classList.toggle("timer-invisible",
       minigame.game.finishBased && minigame.game.playStarted !== null);
     $("cmTime").textContent = Math.ceil(remaining);
     $("cmTimeLabel").textContent = minigame.game.playStarted === null

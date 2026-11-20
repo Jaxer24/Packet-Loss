@@ -7,6 +7,8 @@
 const C = require("./config");
 const M = require("./map");
 const { tickRedBot } = require("./red-bot");
+const { useCharge, chargeStatus, teamChargePool } = require("./charge-pool");
+const { weaponRecoil } = require("./recoil");
 const {
   dist,
   angleDiff,
@@ -22,17 +24,12 @@ const KNIFE_COOLDOWN_SECONDS = 0.5;
 const KNIFE_EFFECT_SECONDS = 0.25;
 const MINIGAMES = ["flappy", "maze", "meteors", "pacman", "routing", "orbit", "scanner"];
 const FINISH_MINIGAMES = new Set(["maze", "pacman", "routing"]);
+const EQUIPMENT_ACTIONS = new Set(["reload", "knife", "weapon_cycle", "weapon_select", "use_equipped"]);
 const randomMinigame = () => MINIGAMES[Math.floor(Math.random() * MINIGAMES.length)];
 const GUNS = {
   pistol: { capacity: C.pistolAmmo, cd: 0.35, spread: 0, dmg: C.pistolDamage },
   smg: { capacity: C.smgAmmo, cd: 0.09, spread: 0, dmg: C.smgDamage },
 };
-const SMG_RECOIL_PATTERN = [
-  0, 0.025, 0.06, 0.105, 0.15, 0.195,
-  0.225, 0.25, 0.235, 0.2, 0.16, 0.11,
-  0.055, 0, -0.055, -0.11, -0.165, -0.215,
-  -0.245, -0.22, -0.17, -0.105, -0.04, 0.025,
-];
 const nowSec = () => Date.now() / 1000;
 const rid = () => Math.random().toString(36).slice(2, 7);
 const num = (v, lo, hi) => (Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : 0);
@@ -57,6 +54,7 @@ class Game {
   }
 
   // =============== LOBBY ===============
+  // A reconnect keeps the existing player and team; someone joining mid-match spectates.
   connect(name) {
     let p = this.players.get(name);
     if (!p) {
@@ -146,6 +144,7 @@ class Game {
   }
 
   // =============== MATCH SETUP ===============
+  // Reset the map and all match-only state. A solo Blue team gets an AI Red opponent.
   startMatch() {
     const t = (this.t = nowSec());
     this.phase = "playing";
@@ -209,28 +208,12 @@ class Game {
     this.lightsOffUntil = 0;
     this.lightsCdUntil = 0;
     this.nextShift = t + C.guardRouteShiftSeconds;
-    this.redPool = {
-      max: Math.max(
-        1,
-        Math.round(
-          C.remoteHackCharges *
-            (1 + C.teamChargeMultiplier * (Math.max(1, reds.length) - 1)),
-        ),
-      ),
-      cds: [],
-      recharge: C.remoteHackRechargeSeconds,
-    };
-    this.bluePool = {
-      max: Math.max(
-        1,
-        Math.round(
-          C.blueSecurityCharges *
-            (1 + C.teamChargeMultiplier * (Math.max(1, blues.length) - 1)),
-        ),
-      ),
-      cds: [],
-      recharge: C.blueSecurityRechargeSeconds,
-    };
+    this.redPool = teamChargePool(
+      C.remoteHackCharges, reds.length, C.teamChargeMultiplier, C.remoteHackRechargeSeconds,
+    );
+    this.bluePool = teamChargePool(
+      C.blueSecurityCharges, blues.length, C.teamChargeMultiplier, C.blueSecurityRechargeSeconds,
+    );
 
     const guardCount = C.guardCountByRedPlayers[Math.min(3, reds.length)] || 5;
     const routeOrder = shuffle(M.routes.map((_, i) => i));
@@ -272,6 +255,7 @@ class Game {
     this.broadcastLobby();
   }
 
+  // Used for both the initial spawn and a fresh respawn.
   initRed(p, spawnIndex) {
     const sp = M.redSpawns[spawnIndex] || M.redSpawns[0];
     Object.assign(p, {
@@ -349,6 +333,7 @@ class Game {
     };
   }
 
+  // Send the map and settings at match start or reconnect; live state arrives in snapshots.
   sendInit(p) {
     this.send(p.name, {
       t: "init",
@@ -376,6 +361,7 @@ class Game {
   }
 
   // =============== INCOMING MESSAGES ===============
+  // Validate phase and role before applying client input or actions.
   handle(name, msg) {
     const p = this.players.get(name);
     if (!p || !msg || typeof msg.t !== "string") {
@@ -434,6 +420,7 @@ class Game {
     this.broadcastLobby();
   }
 
+  // Leaving a team cancels its ongoing actions; returning restores the original team.
   setSpectatorMode(p, enabled) {
     if (enabled && (p.team === "red" || p.team === "blue")) {
       const previousTeam = p.team;
@@ -482,6 +469,7 @@ class Game {
     this.broadcastLobby();
   }
 
+  // Respawn messages are handled before the alive check so dead Reds can reboot.
   act(p, m) {
     const t = this.t;
     if (p.team === "red") {
@@ -536,19 +524,8 @@ class Game {
       if (!p.alive) {
         return;
       }
-      if (m.a === "reload") {
-        this.startReload(p);
-      } else if (m.a === "knife") {
-        const previous = p.cur;
-        p.cur = "knife";
-        this.fire(p, t);
-        p.cur = previous;
-      } else if (m.a === "weapon_cycle") {
-        this.cycleWeapon(p, p, m.direction || 1);
-      } else if (m.a === "weapon_select") {
-        this.selectWeapon(p, p, String(m.weapon || ""));
-      } else if (m.a === "use_equipped") {
-        if (p.cur === "pad") this.fire(p, t);
+      if (EQUIPMENT_ACTIONS.has(m.a)) {
+        this.useEquipment(p, p, m);
       } else if (m.a === "steal") {
         this.stealTag(p);
       } else if (m.a === "hack") {
@@ -568,6 +545,7 @@ class Game {
     }
   }
 
+  // Normal mode stays at zero; hard mode scales with extraction progress and match time.
   minigameDifficulty(serverId = null) {
     if (!this.hardMode) return 0;
     const progress = this.servers.reduce((sum, server) =>
@@ -576,42 +554,25 @@ class Game {
     return Math.max(0, Math.min(1, progress * 0.18 + elapsed * 0.35));
   }
 
-  // =============== CHARGE POOLS ===============
-  // `cds` contains the absolute time at which each spent charge becomes available.
-  availableCharges(pool) {
-    pool.cds = pool.cds.filter((x) => x > this.t);
-    return pool.max - pool.cds.length;
-  }
-
-  // Spend one charge and schedule its individual recharge.
-  useCharge(pool, seconds) {
-    if (this.availableCharges(pool) <= 0) {
-      return false;
-    }
-    const previousReady = pool.cds.length ? Math.max(...pool.cds) : this.t;
-    pool.cds.push(Math.max(this.t, previousReady) + seconds);
-    return true;
-  }
-
-  // Compact fields are part of the client snapshot: available, maximum, next recharge.
-  chargeStatus(pool) {
-    const available = this.availableCharges(pool);
-    const progress = pool.cds
-      .slice()
-      .sort((a, b) => a - b)
-      .map((readyAt, index, all) => {
-        const startedAt = index === 0 ? readyAt - (pool.recharge || 1) : all[index - 1];
-        return Math.max(0, Math.min(1, (this.t - startedAt) / (pool.recharge || 1)));
-      });
-    return {
-      a: available,
-      m: pool.max,
-      n: pool.cds.length ? Math.ceil(Math.min(...pool.cds) - this.t) : 0,
-      p: [...Array(available).fill(1), ...progress],
-    };
-  }
-
   // =============== RED ACTIONS ===============
+  // Red players and possessed guards share the same equipment controls.
+  useEquipment(entity, player, action) {
+    if (action.a === "reload") {
+      this.startReload(entity, player);
+    } else if (action.a === "knife") {
+      const previous = entity.cur;
+      entity.cur = "knife";
+      this.fire(entity, this.t);
+      entity.cur = previous;
+    } else if (action.a === "weapon_cycle") {
+      this.cycleWeapon(entity, player, action.direction || 1);
+    } else if (action.a === "weapon_select") {
+      this.selectWeapon(entity, player, String(action.weapon || ""));
+    } else if (action.a === "use_equipped" && entity.cur === "pad") {
+      this.fire(entity, this.t);
+    }
+  }
+
   startReload(entity, player = entity) {
     const spec = GUNS[entity.cur];
     if (!spec || entity.reloading || entity.guns[entity.cur] >= spec.capacity) return;
@@ -662,6 +623,7 @@ class Game {
     entity.cur = weapon;
   }
 
+  // Extraction uses one charge, then keeps its accumulated progress across challenges.
   startServerExtraction(p, id) {
     const server = this.servers.find((item) => item.id === id);
     if (!server || server.done) {
@@ -679,7 +641,7 @@ class Game {
     if (dist(p.x, p.y, server.x, server.y) >= C.serverHackRange) {
       return this.toPlayer(p, "Get closer to the server before starting extraction.");
     }
-    if (!this.useCharge(this.redPool, C.remoteHackRechargeSeconds)) {
+    if (!useCharge(this.redPool, C.remoteHackRechargeSeconds, this.t)) {
       return this.toPlayer(p, "No hack charges left.");
     }
     if (p.disguise) {
@@ -713,6 +675,8 @@ class Game {
     this.toTeam("blue", "Extraction started on " + id + "! Click it on the radar to counterhack.");
   }
 
+  // Each challenge has its own ID, separate from the ID of the overall extraction.
+  // This prevents a late result from an earlier challenge affecting the current one.
   startServerChallenge(p) {
     p.extraction.challengeSequence = (p.extraction.challengeSequence || 0) + 1;
     p.extraction.challengeId = rid() + "-" + p.extraction.challengeSequence;
@@ -731,6 +695,7 @@ class Game {
     });
   }
 
+  // Release the server and cancel any counterhack tied to this extraction session.
   stopServerExtraction(p, reason) {
     if (!p.extraction) return;
     const attempt = p.extraction;
@@ -762,6 +727,7 @@ class Game {
     this.send(p.name, { t: "minigame_cancel", id: attempt.challengeId, text: reason });
   }
 
+  // Objective-based wins start another challenge; the tick loop advances timed games.
   finishServerChallenge(p, message) {
     const attempt = p.extraction;
     if (!attempt || message.id !== attempt.challengeId) return;
@@ -805,7 +771,7 @@ class Game {
     if (this.empContainsPoint(p.x, p.y) || this.empIntersectsDevice(device)) {
       return this.toPlayer(p, "EMP interference prevents hacking.");
     }
-    if (!this.useCharge(this.redPool, C.remoteHackRechargeSeconds)) {
+    if (!useCharge(this.redPool, C.remoteHackRechargeSeconds, this.t)) {
       return this.toPlayer(p, "No remote hack charges left.");
     }
     if (door) {
@@ -905,6 +871,8 @@ class Game {
   }
 
   // =============== BLUE ACTIONS ===============
+  // Blue controls security devices from radar or through a possessed guard.
+  // Counterhacks are tied to the extraction session that was active when they began.
   blueAct(p, m) {
     const t = this.t;
     if (m.a === "alert" || m.a === "emp") {
@@ -925,7 +893,7 @@ class Game {
         }
         this.toAll("An EMP field was deployed for " + C.empSeconds + "s.");
       } else {
-        if (!this.useCharge(this.alertPool, C.alertCooldownSeconds)) {
+        if (!useCharge(this.alertPool, C.alertCooldownSeconds, this.t)) {
           return this.toPlayer(p, "No guard alerts left.");
         }
         this.manualAlertSequence++;
@@ -939,31 +907,16 @@ class Game {
         this.alertGuards(m.x, m.y, C.alertRange, C.guardInvestigationSeconds, this.manualAlertSequence);
         this.toTeam("blue", p.name + " sent guards to investigate.");
       }
-    } else if (m.a === "reload") {
+    } else if (EQUIPMENT_ACTIONS.has(m.a)) {
       const guard = this.guards.find((g) => g.id === p.possessed && g.possessedBy === p.name && g.alive);
-      if (guard) this.startReload(guard, p);
-    } else if (m.a === "knife" || m.a === "weapon_cycle" || m.a === "weapon_select" || m.a === "use_equipped") {
-      const guard = this.guards.find((g) => g.id === p.possessed && g.possessedBy === p.name && g.alive);
-      if (!guard) return;
-      if (m.a === "knife") {
-        const previous = guard.cur;
-        guard.cur = "knife";
-        this.fire(guard, t);
-        guard.cur = previous;
-      } else if (m.a === "weapon_cycle") {
-        this.cycleWeapon(guard, p, m.direction || 1);
-      } else if (m.a === "weapon_select") {
-        this.selectWeapon(guard, p, String(m.weapon || ""));
-      } else if (guard.cur === "pad") {
-        this.fire(guard, t);
-      }
+      if (guard) this.useEquipment(guard, p, m);
     } else if (m.a === "door") {
       const d = this.doors.find((x) => x.id === m.id);
       if (!d) {
         return;
       }
       if (!this.doorClosed(d)) {
-        if (!this.useCharge(this.bluePool, C.blueSecurityRechargeSeconds)) {
+        if (!useCharge(this.bluePool, C.blueSecurityRechargeSeconds, this.t)) {
           return this.toPlayer(p, "No security charges left.");
         }
         d.open = false;
@@ -1018,7 +971,7 @@ class Game {
       if (!s || s.done || !s.extractor || s.counterUsed || s.counterCooldownUntil > t || p.counter) {
         return this.toPlayer(p, "Counterhack not available.");
       }
-      if (!this.useCharge(this.bluePool, C.blueSecurityRechargeSeconds)) {
+      if (!useCharge(this.bluePool, C.blueSecurityRechargeSeconds, this.t)) {
         return this.toPlayer(p, "No security charges left.");
       }
       s.counterUsed = true; // one attempt per extraction session
@@ -1075,7 +1028,7 @@ class Game {
     if (p.counter) {
       return this.toPlayer(p, "Counterhack not available for that " + kind + ".");
     }
-    if (!this.useCharge(this.bluePool, C.blueSecurityRechargeSeconds)) {
+    if (!useCharge(this.bluePool, C.blueSecurityRechargeSeconds, this.t)) {
       return this.toPlayer(p, "No security charges left.");
     }
     device.hacked = false;
@@ -1097,6 +1050,7 @@ class Game {
   }
 
   // =============== HELPERS ===============
+  // EMP affects both points (players) and device rectangles; either can block a hack.
   empContainsPoint(x, y) {
     return this.emps.some((emp) => emp.until > this.t && dist(x, y, emp.x, emp.y) <= C.empRadius);
   }
@@ -1228,26 +1182,7 @@ class Game {
   }
 
   // =============== COMBAT ===============
-  weaponRecoil(entity, weapon, time) {
-    const reset = weapon === "smg" ? C.smgRecoilResetSeconds : C.pistolRecoilResetSeconds;
-    if (entity.recoilWeapon !== weapon || time >= (entity.recoilResetAt || 0)) {
-      entity.recoilWeapon = weapon;
-      entity.recoilShots = 0;
-    }
-    const shot = entity.recoilShots++;
-    entity.recoilResetAt = time + reset;
-    const moving = entity.input && Math.hypot(entity.input.mx, entity.input.my) > 0;
-    const running = moving && entity.input.run;
-    if (weapon === "smg") {
-      const pattern = SMG_RECOIL_PATTERN[Math.min(shot, SMG_RECOIL_PATTERN.length - 1)];
-      const spread = running ? C.smgRunningSpread : moving ? C.smgMovingSpread : 0;
-      return pattern + (Math.random() - 0.5) * spread * 2;
-    }
-    const bloom = Math.min(0.28, Math.max(0, shot - 0.25) * C.pistolBloomPerShot);
-    const spread = bloom + (running ? C.pistolRunningSpread : moving ? C.pistolMovingSpread : 0);
-    return (Math.random() - 0.5) * spread * 2;
-  }
-
+  // Resolve the selected equipment on the server, including damage and cooldowns.
   fire(e, t) {
     const a = Math.atan2(e.input.ay - e.y, e.input.ax - e.x);
     e.aim = a;
@@ -1317,7 +1252,7 @@ class Game {
       e.guns[e.cur]--;
       if (e.guns[e.cur] === 0) this.startReload(e, e.kind === "red" ? e : this.players.get(e.possessedBy));
       e.nextShot = t + spec.cd;
-      this.spawnBullet(e, a + (this.hardMode ? this.weaponRecoil(e, e.cur, t) : 0), spec.dmg);
+      this.spawnBullet(e, a + (this.hardMode ? weaponRecoil(e, e.cur, t) : 0), spec.dmg);
       if (isRed) {
         this.makeNoise(e.x, e.y);
         this.breakDisguiseIfSeen(e);
@@ -1455,6 +1390,7 @@ class Game {
   }
 
   // =============== MAIN TICK ===============
+  // Advance simulation using a fixed step, then send each connected player a filtered view.
   tick() {
     const t = (this.t = nowSec());
     const dt = 1 / C.tickRate;
@@ -1590,7 +1526,7 @@ class Game {
 
     // Collect ready lockers touched during movement, even near a server.
     this.collectLockers(p, previousX, previousY, p, t);
-    // corpse disposal: hold 2 next to a guard corpse
+    // Holding the dispose action near a guard corpse gradually removes it.
     p.disposing = null;
     if (inp.dispose) {
       const c = this.corpses.find(
@@ -1607,6 +1543,7 @@ class Game {
     }
   }
 
+  // Timed counterhacks finish here; objective-based ones wait for a client result.
   tickBlue(p, t) {
     if (p.counter && p.counter.readyAt !== null &&
         !FINISH_MINIGAMES.has(p.counter.game) &&
@@ -1623,6 +1560,7 @@ class Game {
     }
   }
 
+  // Sample several parallel rays so a small gap in a wall does not define the room boundary.
   wallInDirection(x, y, dx, dy) {
     const offsets = [0, -25, 25, -50, 50];
     for (let distance = 20; distance <= Math.max(M.WORLD.w, M.WORLD.h); distance += 20) {
@@ -1639,6 +1577,7 @@ class Game {
     return false;
   }
 
+  // Extraction requires walls in all four directions around the player.
   insideServerRoom(player) {
     const horizontal = this.wallInDirection(player.x, player.y, -1, 0) &&
       this.wallInDirection(player.x, player.y, 1, 0);
@@ -1647,6 +1586,8 @@ class Game {
     return horizontal && vertical;
   }
 
+  // Progress counts active challenge time, not time spent waiting to start a challenge.
+  // Interrupted extractions keep their existing progress for a later attempt.
   tickServers(dt, t) {
     for (const s of this.servers) {
       if (s.done || !s.extractor) continue;
@@ -1803,6 +1744,7 @@ class Game {
   }
 
   // =============== GUARD AI ===============
+  // A guard sees nearby targets in any direction; distant targets must be in its view cone.
   guardSees(g, x, y) {
     const d = dist(g.x, g.y, x, y);
     if (d > C.guardSightRange) {
@@ -1818,6 +1760,8 @@ class Game {
     return this.los(g.x, g.y, x, y);
   }
 
+  // Autonomous guards patrol, investigate alerts, and chase visible Reds.
+  // Hard mode also tracks active extractors even when they are out of sight.
   tickGuard(g, dt, t) {
     if (!g.alive) {
       if (t >= g.respawnAt) {
@@ -2057,6 +2001,7 @@ class Game {
   }
 
   // =============== SNAPSHOTS (what each client is allowed to see) ===============
+  // Sight combines light level, view cone, and line-of-sight obstruction.
   canViewerSee(v, x, y, nightVision) {
     const d = dist(v.x, v.y, x, y);
     if (nightVision || this.lightsOn()) {
@@ -2145,6 +2090,7 @@ class Game {
     };
   }
 
+  // Common map state goes to everyone; player and guard information depends on the role.
   snapshot(p) {
     const t = this.t,
       r = Math.round;
@@ -2230,7 +2176,7 @@ class Game {
         hasPad: p.hasPad,
         padSet: !!p.pad,
         disguised: !!p.disguise,
-        charges: this.chargeStatus(this.redPool),
+        charges: chargeStatus(this.redPool, this.t),
         disposing: p.disposing,
         reloading: p.reloading,
         reloadProgress: p.reloading
@@ -2322,9 +2268,9 @@ class Game {
       snap.me = {
         view: p.view,
         possessed: !!g,
-        charges: this.chargeStatus(this.bluePool),
+        charges: chargeStatus(this.bluePool, this.t),
         darkCd: Math.max(0, Math.ceil(this.lightsCdUntil - t)),
-        alertCd: this.chargeStatus(this.alertPool),
+        alertCd: chargeStatus(this.alertPool, this.t),
         empCd: Math.max(0, Math.ceil(this.empCdUntil - t)),
         possessCd: Math.max(0, Math.ceil(p.possessCdUntil - t)),
       };

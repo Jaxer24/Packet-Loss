@@ -1,6 +1,7 @@
 const C = require("./config");
 const M = require("./map");
 const { dist, segHitsRect } = require("./geom");
+const { availableCharges } = require("./charge-pool");
 
 const GUARD_AVOID_RADIUS = 150;
 const FLEE_DISTANCE = 350;
@@ -29,7 +30,7 @@ function tickRedBot(game, bot, t) {
     .sort((a, b) => dist(bot.x, bot.y, a.x, a.y) - dist(bot.x, bot.y, b.x, b.y))[0];
   if (!threat && !bot.extraction && target &&
       dist(bot.x, bot.y, target.x, target.y) < C.serverHackRange &&
-      !game.empBlocksExtraction(bot, target) && game.availableCharges(game.redPool) > 0) {
+      !game.empBlocksExtraction(bot, target) && availableCharges(game.redPool, game.t) > 0) {
     game.startServerExtraction(bot, target.id);
   }
 
@@ -79,7 +80,7 @@ function tickRedBot(game, bot, t) {
     ...game.lasers.filter((laser) => game.laserActive(laser) && intersects(laser)),
   ];
   for (const device of devices) {
-    if (!game.availableCharges(game.redPool)) break;
+    if (!availableCharges(game.redPool, game.t)) break;
     if (game.empContainsPoint(bot.x, bot.y) || game.empIntersectsDevice(device)) continue;
     game.remoteHack(bot, device.id);
   }
